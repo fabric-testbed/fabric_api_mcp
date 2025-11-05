@@ -1,0 +1,42 @@
+services:
+  mcp-server:
+    build:
+      # Set the build context to the subdirectory containing the Dockerfile and code
+      context: server/
+      dockerfile: Dockerfile
+    container_name: fabric-prov-mcp
+    image: fabric-prov-mcp:latest
+    restart: always
+    # The MCP server uses port 5000 internally (as defined in server.py)
+    networks:
+      - frontend
+    # NOTE: We don't need 'ports:' here unless you want to access it directly from the host.
+    # We rely on 'nginx' to route traffic to it.
+    environment:
+      FABRIC_ORCHESTRATOR_HOST: orchestrator.fabric-testbed.net
+      FABRIC_AM_HOST: artifacts.fabric-testbed.net
+      FABRIC_CORE_API_HOST: uis.fabric-testbed.net
+      FABRIC_CREDMGR_HOST: cm.fabric-testbed.net
+    volumes:
+      - ./mcp-logs:/var/log/mcp # Optional: for application logs
+
+  nginx:
+    image: library/nginx:1
+    container_name: fabric-prov-nginx
+    networks:
+      - frontend
+      - backend
+    ports:
+      - 443:443
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl/fullchain.pem:/etc/ssl/public.pem
+      - ./ssl/privkey.pem:/etc/ssl/private.pem
+      - ./nginx-logs:/var/log/nginx
+    restart: always
+
+networks:
+  frontend:
+  backend:
+    internal: true
