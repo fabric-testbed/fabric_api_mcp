@@ -60,7 +60,6 @@ def _fabric_manager() -> Tuple[FabricManagerV2, str]:
     fm = FabricManagerV2(
         credmgr_host=FABRIC_CREDMGR_HOST,
         orchestrator_host=FABRIC_ORCHESTRATOR_HOST,
-        logger=log,
         http_debug=bool(int(os.environ.get("HTTP_DEBUG", "0"))),
     )
     return fm, token
