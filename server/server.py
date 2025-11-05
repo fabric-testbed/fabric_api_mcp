@@ -143,6 +143,7 @@ async def query_slices(
     slices = {}
     for s in result:
         slices[s.name] = s.to_dict()
+    return slices
 
 
 # ---------------------------------------
