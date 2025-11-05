@@ -163,7 +163,9 @@ async def query_slices(
 async def get_slivers(
     ctx: Context,
     slice_id: str,
-    as_self: bool = True
+    as_self: bool = True,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     fm, id_token = _fabric_manager()
     slivers = await _call_threadsafe(
@@ -189,6 +191,8 @@ async def create_slice(
     lifetime: Optional[int] = None,
     lease_start_time: Optional[str] = None,
     lease_end_time: Optional[str] = None,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     fm, id_token = _fabric_manager()
     slivers = await _call_threadsafe(
@@ -214,6 +218,8 @@ async def modify_slice(
     ctx: Context,
     slice_id: str,
     graph_model: str,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     fm, id_token = _fabric_manager()
     slivers = await _call_threadsafe(
@@ -234,6 +240,8 @@ async def modify_slice(
 async def accept_modify(
     ctx: Context,
     slice_id: str,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     fm, id_token = _fabric_manager()
     accepted = await _call_threadsafe(
@@ -254,6 +262,8 @@ async def renew_slice(
     ctx: Context,
     slice_id: str,
     lease_end_time: str,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     fm, id_token = _fabric_manager()
     await _call_threadsafe(
@@ -272,6 +282,8 @@ async def renew_slice(
 )
 async def delete_slice(
     ctx: Context,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
     slice_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     fm, id_token = _fabric_manager()
@@ -296,6 +308,8 @@ async def resources(
     end_date: Optional[str] = None,
     includes: Optional[List[str]] = None,
     excludes: Optional[List[str]] = None,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     fm, id_token = _fabric_manager()
     res = await _call_threadsafe(
@@ -325,6 +339,8 @@ async def poa_create(
     node_set: Optional[List[str]] = None,
     keys: Optional[List[Dict[str, str]]] = None,
     bdf: Optional[List[str]] = None,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     fm, id_token = _fabric_manager()
     poas = await _call_threadsafe(
@@ -353,6 +369,8 @@ async def poa_get(
     states: Optional[List[str]] = None,
     limit: int = 20,
     offset: int = 0,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     fm, id_token = _fabric_manager()
     poas = await _call_threadsafe(
