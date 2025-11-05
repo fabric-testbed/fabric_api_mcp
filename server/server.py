@@ -12,15 +12,13 @@ from fastmcp.server.dependencies import get_http_headers
 
 from fim.user import GraphFormat
 
-from fabrictestbed.fabric_manager_v2 import FabricManagerV2, get_logger
+from fabrictestbed.fabric_manager_v2 import FabricManagerV2
 
 # ---------------------------------------
 # Config (env with sensible defaults)
 # ---------------------------------------
 FABRIC_ORCHESTRATOR_HOST = os.environ.get("FABRIC_ORCHESTRATOR_HOST", "orchestrator.fabric-testbed.net")
 FABRIC_CREDMGR_HOST      = os.environ.get("FABRIC_CREDMGR_HOST", "cm.fabric-testbed.net")
-
-# Optional (not used by V3 façade directly, kept for compatibility/logging)
 FABRIC_AM_HOST           = os.environ.get("FABRIC_AM_HOST", "artifacts.fabric-testbed.net")
 FABRIC_CORE_API_HOST     = os.environ.get("FABRIC_CORE_API_HOST", "uis.fabric-testbed.net")
 
@@ -38,12 +36,10 @@ mcp = FastMCP(
     version="2.0.0",
 )
 
-# Load your markdown system prompt
 SYSTEM_TEXT = Path("system.md").read_text(encoding="utf-8").strip()
 
 @mcp.prompt(name="fabric-system")
 def fabric_system_prompt():
-    """System rules for querying FABRIC via MCP"""
     return SYSTEM_TEXT
 
 # ---------------------------------------
@@ -61,8 +57,6 @@ def _fabric_manager() -> Tuple[FabricManagerV2, str]:
     token = _bearer_from_headers(headers)
     if not token:
         raise ValueError("Authentication Required: Missing or invalid Authorization Bearer token.")
-    # Logger once; reuse across calls
-    log = get_logger("fabric.mcp", level=os.environ.get("LOG_LEVEL", "INFO"))
     fm = FabricManagerV2(
         credmgr_host=FABRIC_CREDMGR_HOST,
         orchestrator_host=FABRIC_ORCHESTRATOR_HOST,
@@ -72,11 +66,136 @@ def _fabric_manager() -> Tuple[FabricManagerV2, str]:
     return fm, token
 
 async def _call_threadsafe(fn, **kwargs):
-    """Run sync function in thread to keep FastAPI/uvicorn loop free."""
     return await asyncio.to_thread(fn, **{k: v for k, v in kwargs.items() if v is not None})
 
+# ---------- NEW: Topology query tools + helpers ----------
+
+def _apply_sort(items: List[Dict[str, Any]], sort: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    sort = {"field": "cores_available", "direction": "desc"}  # asc|desc
+    """
+    if not sort or not isinstance(sort, dict):
+        return items
+    field = sort.get("field")
+    if not field:
+        return items
+    direction = (sort.get("direction") or "asc").lower()
+    reverse = direction == "desc"
+    # Missing field -> None (sorted last)
+    return sorted(items, key=lambda r: (r.get(field) is None, r.get(field)), reverse=reverse)
+
+def _paginate(items: List[Dict[str, Any]], limit: Optional[int], offset: int) -> List[Dict[str, Any]]:
+    start = max(0, int(offset or 0))
+    if limit is None:
+        return items[start:]
+    return items[start : start + max(0, int(limit))]
+
+# Note: We do filtering within FabricManagerV2.query_* already via the filters dict.
+# To support sorting, we ask FM for a reasonably large page when sort is requested,
+# then apply sort+paginate here. Cap to avoid abuse.
+_MAX_FETCH_FOR_SORT = int(os.environ.get("MAX_FETCH_FOR_SORT", "5000"))
+
+@mcp.tool(
+    name="query-sites",
+    title="Query Sites",
+    description=(
+        "List sites with filters and optional sorting.\n"
+        "filters: dict supporting operators eq, ne, lt, lte, gt, gte, in, contains, icontains, regex, any, all, and 'or'.\n"
+        "sort: {\"field\": \"name|cores_available|...\", \"direction\": \"asc|desc\"}"
+    ),
+)
+async def query_sites(
+    ctx: Context,
+    filters: Optional[Dict[str, Any]] = None,
+    sort: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = 200,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    fm, id_token = _fabric_manager()
+    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+    items = await _call_threadsafe(
+        fm.query_sites, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+    )
+    items = _apply_sort(items, sort)
+    return _paginate(items, limit=limit, offset=offset)
+
+@mcp.tool(
+    name="query-hosts",
+    title="Query Hosts",
+    description=(
+        "List hosts with filters and optional sorting. "
+        "Filter on fields like site, name, cores_* / ram_* / disk_* or nested components (client-side contains/regex).\n"
+        "filters: operator dicts; sort: {\"field\": \"cores_available\", \"direction\": \"desc\"}"
+    ),
+)
+async def query_hosts(
+    ctx: Context,
+    filters: Optional[Dict[str, Any]] = None,
+    sort: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = 200,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    fm, id_token = _fabric_manager()
+    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+    items = await _call_threadsafe(
+        fm.query_hosts, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+    )
+    items = _apply_sort(items, sort)
+    return _paginate(items, limit=limit, offset=offset)
+
+@mcp.tool(
+    name="query-facility-ports",
+    title="Query Facility Ports",
+    description=(
+        "List facility ports with filters and optional sorting. "
+        "Common fields: site, name, vlans, port, switch, labels.\n"
+        "filters: operator dicts; sort optional."
+    ),
+)
+async def query_facility_ports(
+    ctx: Context,
+    filters: Optional[Dict[str, Any]] = None,
+    sort: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = 200,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    fm, id_token = _fabric_manager()
+    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+    items = await _call_threadsafe(
+        fm.query_facility_ports, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+    )
+    items = _apply_sort(items, sort)
+    return _paginate(items, limit=limit, offset=offset)
+
+@mcp.tool(
+    name="query-links",
+    title="Query Links",
+    description=(
+        "List L2/L3 links with filters and optional sorting. "
+        "Fields: name, layer, labels, bandwidth, endpoints (array of {site,node,port}).\n"
+        "Example filter to touch a site: "
+        "{\"or\": [{\"name\": {\"icontains\": \"UCSD\"}}, {\"layer\": {\"eq\": \"L2\"}}]}"
+    ),
+)
+async def query_links(
+    ctx: Context,
+    filters: Optional[Dict[str, Any]] = None,
+    sort: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = 200,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    fm, id_token = _fabric_manager()
+    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+    items = await _call_threadsafe(
+        fm.query_links, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+    )
+    items = _apply_sort(items, sort)
+    return _paginate(items, limit=limit, offset=offset)
+
+# ---------- END NEW ----------
+
 # ---------------------------------------
-# Tools
+# Existing tools (your original ones) …
 # ---------------------------------------
 
 @mcp.tool(
@@ -92,32 +211,25 @@ async def query_slices(
     slice_id: Optional[str] = None,
     slice_name: Optional[str] = None,
     slice_state: Optional[List[str]] = None,
-    exclude_slice_state: Optional[List[str]] = None,   # kept for back-compat; applied client-side
+    exclude_slice_state: Optional[List[str]] = None,
     offset: int = 0,
     limit: int = 200,
     fetch_all: bool = True,
-    graph_format: Optional[str] = str(GraphFormat.GRAPHML),  # not used in list call, kept for parity
+    graph_format: Optional[str] = str(GraphFormat.GRAPHML),
 ) -> Dict[str, Any]:
-    """
-    Returns a dict keyed by slice name with slice properties (MCP-friendly).
-    """
     fm, id_token = _fabric_manager()
-
-    # If slice_id is provided, return that one directly
     if slice_id:
         item = await _call_threadsafe(
             fm.get_slice,
             id_token=id_token,
             slice_id=slice_id,
-            graph_format="GRAPHML",  # or pass `graph_format` if you prefer
+            graph_format="GRAPHML",
             as_self=as_self,
             return_fmt="dict",
         )
-        # Key the response by name if present, else by slice_id
         key = item.get("name") or item.get("slice_id") or "slice"
         return {key: item}
 
-    # Otherwise, list with optional filters
     results: List[Dict[str, Any]] = []
     cur_offset = offset
     while True:
@@ -135,7 +247,6 @@ async def query_slices(
         )
         if not page:
             break
-        # Apply exclude state filter client-side if provided
         if exclude_slice_state:
             exclude_set = set(exclude_slice_state)
             page = [p for p in page if (p.get("state") not in exclude_set)]
@@ -144,16 +255,13 @@ async def query_slices(
             break
         cur_offset += limit
 
-    # Map by slice name (fall back to slice_id to avoid collisions/missing names)
     out: Dict[str, Any] = {}
     for s in results:
         key = s.get("name") or s.get("slice_id")
-        # In rare collisions, suffix with short id
         if key in out and s.get("slice_id"):
             key = f"{key}-{s['slice_id'][:8]}"
         out[key] = s
     return out
-
 
 @mcp.tool(
     name="get-slivers",
@@ -176,7 +284,6 @@ async def get_slivers(
         return_fmt="dict",
     )
     return slivers
-
 
 @mcp.tool(
     name="create-slice",
@@ -208,7 +315,6 @@ async def create_slice(
     )
     return slivers
 
-
 @mcp.tool(
     name="modify-slice",
     title="Modify Slice",
@@ -231,7 +337,6 @@ async def modify_slice(
     )
     return slivers
 
-
 @mcp.tool(
     name="accept-modify",
     title="Accept Last Modify",
@@ -251,7 +356,6 @@ async def accept_modify(
         return_fmt="dict",
     )
     return accepted
-
 
 @mcp.tool(
     name="renew-slice",
@@ -274,7 +378,6 @@ async def renew_slice(
     )
     return {"status": "ok", "slice_id": slice_id, "lease_end_time": lease_end_time}
 
-
 @mcp.tool(
     name="delete-slice",
     title="Delete Slice",
@@ -293,7 +396,6 @@ async def delete_slice(
         slice_id=slice_id,
     )
     return {"status": "ok", "slice_id": slice_id}
-
 
 @mcp.tool(
     name="resources",
@@ -325,7 +427,6 @@ async def resources(
     )
     return res
 
-
 @mcp.tool(
     name="poa-create",
     title="POA Create",
@@ -347,7 +448,7 @@ async def poa_create(
         fm.poa_create,
         id_token=id_token,
         sliver_id=sliver_id,
-        operation=operation,  # validated by orchestrator
+        operation=operation,
         vcpu_cpu_map=vcpu_cpu_map,
         node_set=node_set,
         keys=keys,
@@ -355,7 +456,6 @@ async def poa_create(
         return_fmt="dict",
     )
     return poas
-
 
 @mcp.tool(
     name="poa-get",
@@ -384,7 +484,6 @@ async def poa_get(
         return_fmt="dict",
     )
     return poas
-
 
 # ---------------------------------------
 # Run
