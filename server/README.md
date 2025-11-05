@@ -45,7 +45,7 @@ It provides a structured, secure interface for querying **users**, **projects**,
   * `query-components`
   * `query-sites`
 * Supports additional metadata fields (`toolCallId`, `id`, etc.) gracefully
-* Domain-optimized prompts for N8n and LLM agents (see [`PROMPTS.md`](prompts/system.md))
+* Domain-optimized prompts for N8n and LLM agents (see [`PROMPTS.md`](system.md))
 * Dockerized for easy deployment and integration behind nginx or Vouch Proxy
 
 
@@ -196,7 +196,7 @@ Example payload:
 
 ## Prompts for LLM Integration
 
-See [`PROMPTS.md`](prompts/system.md) for:
+See [`PROMPTS.md`](system.md) for:
 
 * N8n system prompts (Version 1 and 2)
 * Behavior rules for filtering, summarization, and FABRIC project exclusion
