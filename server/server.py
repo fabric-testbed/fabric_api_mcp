@@ -122,7 +122,7 @@ async def query_slices(
         slice_state: Optional[List[str]] = None,
         exclude_slice_state: Optional[List[str]] = None,
         offset: int = 0,
-        limit: int = 1000,
+        limit: int = 200,
         fetch_all: bool = True,
         graph_format: Optional[str] = str(GraphFormat.GRAPHML)
 ) -> Dict[str, Any]:
