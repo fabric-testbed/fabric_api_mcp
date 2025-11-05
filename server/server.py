@@ -56,7 +56,7 @@ mcp = FastMCP(
 )
 
 # Load your markdown system prompt
-SYSTEM_TEXT = Path("prompts/system.md").read_text(encoding="utf-8").strip()
+SYSTEM_TEXT = Path("system.md").read_text(encoding="utf-8").strip()
 
 # Define a function to load the prompt content
 # The docstring becomes the prompt's description.

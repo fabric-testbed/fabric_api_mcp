@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # App code
 COPY server.py /app/
-COPY prompts /app/
+COPY system.md /app/
 
 # Use an unprivileged user
 USER appuser
