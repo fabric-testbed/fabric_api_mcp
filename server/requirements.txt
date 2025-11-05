@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+pydantic
+requests
+fabrictestbed==1.9.1b5
+fastmcp
