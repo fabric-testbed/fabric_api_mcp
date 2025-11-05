@@ -137,7 +137,6 @@ async def query_slices(
         graph_format=graph_format,
         offset=offset,
         limit=limit,
-        fetch_all=fetch_all,
     )
     if status != Status.OK:
         raise Exception(result)
