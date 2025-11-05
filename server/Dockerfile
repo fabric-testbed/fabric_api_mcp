@@ -1,5 +1,4 @@
-# Smaller base image; feel free to keep full if you need build tooling
-FROM python:3.11-slim
+FROM python:3.11.0
 
 LABEL maintainer="Komal Thareja <komal.thareja@gmail.com>"
 
