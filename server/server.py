@@ -105,6 +105,8 @@ _MAX_FETCH_FOR_SORT = int(os.environ.get("MAX_FETCH_FOR_SORT", "5000"))
 )
 async def query_sites(
     ctx: Context,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
     sort: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = 200,
@@ -129,6 +131,8 @@ async def query_sites(
 )
 async def query_hosts(
     ctx: Context,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
     sort: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = 200,
@@ -153,6 +157,8 @@ async def query_hosts(
 )
 async def query_facility_ports(
     ctx: Context,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
     sort: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = 200,
@@ -178,6 +184,8 @@ async def query_facility_ports(
 )
 async def query_links(
     ctx: Context,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
     sort: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = 200,
