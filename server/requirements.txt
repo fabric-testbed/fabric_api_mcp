@@ -2,5 +2,5 @@ fastapi
 uvicorn
 pydantic
 requests
-fabrictestbed==1.9.1b9
+fabrictestbed==1.9.1b10
 fastmcp
