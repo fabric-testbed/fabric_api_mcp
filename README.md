@@ -338,5 +338,3 @@ This accelerates `query-sites`, `query-hosts`, `query-facility-ports`, `query-li
 ## License
 
 [MIT](./LICENSE).
-
-```
