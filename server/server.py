@@ -36,6 +36,33 @@ mcp = FastMCP(
     version="2.0.0",
 )
 
+# top of your MCP file
+from resources_cache import ResourceCache
+
+REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL_SECONDS", "300"))
+CACHE_MAX_FETCH  = int(os.environ.get("CACHE_MAX_FETCH", "5000"))
+CACHE = ResourceCache(interval_seconds=REFRESH_INTERVAL, max_fetch=CACHE_MAX_FETCH)
+
+def _fm_factory_for_cache():
+    # No token here—cache decides whether to use last_good_token or None (public).
+    return FabricManagerV2(
+        credmgr_host=FABRIC_CREDMGR_HOST,
+        orchestrator_host=FABRIC_ORCHESTRATOR_HOST,
+        http_debug=bool(int(os.environ.get("HTTP_DEBUG", "0"))),
+    )
+
+async def _on_startup():
+    CACHE.wire_fm_factory(_fm_factory_for_cache)
+    await CACHE.start()
+
+async def _on_shutdown():
+    await CACHE.stop()
+
+if hasattr(mcp, "app") and mcp.app:
+    mcp.app.add_event_handler("startup", _on_startup)
+    mcp.app.add_event_handler("shutdown", _on_shutdown)
+
+
 SYSTEM_TEXT = Path("system.md").read_text(encoding="utf-8").strip()
 
 @mcp.prompt(name="fabric-system")
@@ -62,6 +89,14 @@ def _fabric_manager() -> Tuple[FabricManagerV2, str]:
         orchestrator_host=FABRIC_ORCHESTRATOR_HOST,
         http_debug=bool(int(os.environ.get("HTTP_DEBUG", "0"))),
     )
+    '''
+    # Let the cache learn the token for future refreshes
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(CACHE.note_token(token))
+    except RuntimeError:
+        pass
+    '''
     return fm, token
 
 async def _call_threadsafe(fn, **kwargs):
@@ -112,11 +147,15 @@ async def query_sites(
     limit: Optional[int] = 200,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    fm, id_token = _fabric_manager()
-    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
-    items = await _call_threadsafe(
-        fm.query_sites, id_token=id_token, filters=filters, limit=fm_limit, offset=0
-    )
+    snap = CACHE.snapshot()
+    items = list(snap.sites) if snap.sites else None
+    if items is None:
+        # cold cache → live call (token required for this path)
+        fm, id_token = _fabric_manager()
+        fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+        items = await _call_threadsafe(
+            fm.query_sites, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+        )
     items = _apply_sort(items, sort)
     return _paginate(items, limit=limit, offset=offset)
 
@@ -138,11 +177,14 @@ async def query_hosts(
     limit: Optional[int] = 200,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    fm, id_token = _fabric_manager()
-    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
-    items = await _call_threadsafe(
-        fm.query_hosts, id_token=id_token, filters=filters, limit=fm_limit, offset=0
-    )
+    snap = CACHE.snapshot()
+    items = list(snap.hosts) if snap.hosts else None
+    if items is None:
+        fm, id_token = _fabric_manager()
+        fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+        items = await _call_threadsafe(
+            fm.query_hosts, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+        )
     items = _apply_sort(items, sort)
     return _paginate(items, limit=limit, offset=offset)
 
@@ -164,11 +206,14 @@ async def query_facility_ports(
     limit: Optional[int] = 200,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    fm, id_token = _fabric_manager()
-    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
-    items = await _call_threadsafe(
-        fm.query_facility_ports, id_token=id_token, filters=filters, limit=fm_limit, offset=0
-    )
+    snap = CACHE.snapshot()
+    items = list(snap.facility_ports) if snap.facility_ports else None
+    if items is None:
+        fm, id_token = _fabric_manager()
+        fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+        items = await _call_threadsafe(
+            fm.query_facility_ports, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+        )
     items = _apply_sort(items, sort)
     return _paginate(items, limit=limit, offset=offset)
 
@@ -191,11 +236,14 @@ async def query_links(
     limit: Optional[int] = 200,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    fm, id_token = _fabric_manager()
-    fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
-    items = await _call_threadsafe(
-        fm.query_links, id_token=id_token, filters=filters, limit=fm_limit, offset=0
-    )
+    snap = CACHE.snapshot()
+    items = list(snap.links) if snap.links else None
+    if items is None:
+        fm, id_token = _fabric_manager()
+        fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
+        items = await _call_threadsafe(
+            fm.query_links, id_token=id_token, filters=filters, limit=fm_limit, offset=0
+        )
     items = _apply_sort(items, sort)
     return _paginate(items, limit=limit, offset=offset)
 
