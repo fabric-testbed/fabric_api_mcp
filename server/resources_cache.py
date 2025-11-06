@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Callable
@@ -43,6 +44,7 @@ class ResourceCache:
 
         # fm_factory returns ONLY a FabricManagerV2 (token handled internally by cache)
         self._fm_factory: Optional[Callable[[], Any]] = None
+        self.log = logging.getLogger("fabric.mcp")
 
     # ----------------------------
     # Lifecycle
@@ -131,6 +133,7 @@ class ResourceCache:
             offset = 0
             limit = min(self._max_fetch, int(kwargs.pop("limit", 500)))
             while True:
+                self.log.debug("Fetching %d of %d", offset, limit)
                 page = await asyncio.to_thread(
                     fetch_fn,
                     id_token=token,   # <-- None triggers public path in your TopologyQueryAPI
