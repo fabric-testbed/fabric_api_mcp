@@ -162,7 +162,7 @@ def tool_logger(tool_name: str):
     return _wrap
 
 # top of your MCP file
-from server.resources_cache import ResourceCache
+from resources_cache import ResourceCache
 
 REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL_SECONDS", "300"))
 CACHE_MAX_FETCH  = int(os.environ.get("CACHE_MAX_FETCH", "5000"))
