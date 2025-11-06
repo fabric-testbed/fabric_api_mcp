@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import os
+import sys
+import time
+import uuid
 import asyncio
+import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Callable
 
 from fastmcp import FastMCP
 from fastmcp.server.context import Context
@@ -13,6 +17,7 @@ from fastmcp.server.dependencies import get_http_headers
 from fim.user import GraphFormat
 
 from fabrictestbed.fabric_manager_v2 import FabricManagerV2
+from functools import wraps
 
 # ---------------------------------------
 # Config (env with sensible defaults)
@@ -28,6 +33,56 @@ print(f"Artifact Manager HOST: {FABRIC_AM_HOST}")
 print(f"Core API HOST: {FABRIC_CORE_API_HOST}")
 
 # ---------------------------------------
+# Logging setup
+# ---------------------------------------
+LOG_LEVEL  = os.environ.get("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = os.environ.get("LOG_FORMAT", "text").lower()  # "text" | "json"
+UVICORN_ACCESS_LOG = os.environ.get("UVICORN_ACCESS_LOG", "1") not in ("0", "false", "False")
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        base = {
+            "ts": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        # include extra fields if present
+        for k in ("request_id", "tool", "path", "method", "status", "duration_ms", "client"):
+            if hasattr(record, k):
+                base[k] = getattr(record, k)
+        if record.exc_info:
+            base["exc_info"] = self.formatException(record.exc_info)
+        return __import__("json").dumps(base, ensure_ascii=False)
+
+def configure_logging() -> None:
+    root = logging.getLogger()
+    root.setLevel(LOG_LEVEL)
+
+    # Clean existing handlers (important when reloading)
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
+    handler = logging.StreamHandler(sys.stdout)
+    if LOG_FORMAT == "json":
+        fmt = _JsonFormatter()
+    else:
+        fmt = logging.Formatter(
+            fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+    handler.setFormatter(fmt)
+    root.addHandler(handler)
+
+    # Align common libs
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+        logging.getLogger(name).setLevel(LOG_LEVEL)
+        logging.getLogger(name).propagate = True
+
+configure_logging()
+log = logging.getLogger("fabric.mcp")
+
+# ---------------------------------------
 # MCP App
 # ---------------------------------------
 mcp = FastMCP(
@@ -35,6 +90,76 @@ mcp = FastMCP(
     instructions="Proxy for accessing FABRIC API data via LLM tool calls.",
     version="2.0.0",
 )
+
+# Access log middleware (FastAPI)
+if hasattr(mcp, "app") and mcp.app:
+    from fastapi import Request
+    @mcp.app.middleware("http")
+    async def access_log_middleware(request: Request, call_next):
+        rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+            status = getattr(response, "status_code", 0)
+        except Exception:
+            status = 500
+            log.exception("Unhandled exception during request",
+                          extra={"request_id": rid, "path": request.url.path, "method": request.method})
+            raise
+        finally:
+            dur_ms = round((time.perf_counter() - start) * 1000, 2)
+            if UVICORN_ACCESS_LOG:
+                log.info("HTTP %s %s -> %s in %.2fms",
+                         request.method, request.url.path, status, dur_ms,
+                         extra={
+                             "request_id": rid,
+                             "path": request.url.path,
+                             "method": request.method,
+                             "status": status,
+                             "duration_ms": dur_ms,
+                             "client": request.client.host if request.client else None,
+                         })
+        # pass request_id back for tracing
+        response.headers["x-request-id"] = rid
+        return response
+
+# ---------------------------------------
+# Tool logging decorator
+# ---------------------------------------
+def tool_logger(tool_name: str):
+    def _wrap(fn):
+        @wraps(fn)  # preserves __name__, __doc__, annotations for FastMCP
+        async def _async_wrapper(*args, **kwargs):
+            # Context is first arg for FastMCP tools (if provided)
+            ctx = args[0] if args else None
+            rid = None
+            try:
+                if ctx and hasattr(ctx, "request") and ctx.request:
+                    rid = ctx.request.headers.get("x-request-id")
+            except Exception:
+                pass
+            rid = rid or kwargs.get("toolCallId") or kwargs.get("tool_call_id") or uuid.uuid4().hex[:12]
+
+            start = time.perf_counter()
+            log.info("Tool start", extra={"tool": tool_name, "request_id": rid})
+            try:
+                result = await fn(*args, **kwargs)
+                dur_ms = round((time.perf_counter() - start) * 1000, 2)
+                size = None
+                if isinstance(result, list):
+                    size = len(result)
+                elif isinstance(result, dict):
+                    size = result.get("count") or len(result)
+                log.info("Tool done in %.2fms (size=%s)", dur_ms, size,
+                         extra={"tool": tool_name, "request_id": rid, "duration_ms": dur_ms})
+                return result
+            except Exception:
+                dur_ms = round((time.perf_counter() - start) * 1000, 2)
+                log.exception("Tool error after %.2fms",
+                              extra={"tool": tool_name, "request_id": rid, "duration_ms": dur_ms})
+                raise
+        return _async_wrapper
+    return _wrap
 
 # top of your MCP file
 from resources_cache import ResourceCache
@@ -52,16 +177,18 @@ def _fm_factory_for_cache():
     )
 
 async def _on_startup():
+    log.info("Starting background cache refresher (interval=%ss, max_fetch=%s)",
+             REFRESH_INTERVAL, CACHE_MAX_FETCH)
     CACHE.wire_fm_factory(_fm_factory_for_cache)
     await CACHE.start()
 
 async def _on_shutdown():
+    log.info("Stopping background cache refresher")
     await CACHE.stop()
 
 if hasattr(mcp, "app") and mcp.app:
     mcp.app.add_event_handler("startup", _on_startup)
     mcp.app.add_event_handler("shutdown", _on_shutdown)
-
 
 SYSTEM_TEXT = Path("system.md").read_text(encoding="utf-8").strip()
 
@@ -83,31 +210,26 @@ def _fabric_manager() -> Tuple[FabricManagerV2, str]:
     headers = get_http_headers() or {}
     token = _bearer_from_headers(headers)
     if not token:
+        log.warning("Missing Authorization header on protected call")
         raise ValueError("Authentication Required: Missing or invalid Authorization Bearer token.")
     fm = FabricManagerV2(
         credmgr_host=FABRIC_CREDMGR_HOST,
         orchestrator_host=FABRIC_ORCHESTRATOR_HOST,
         http_debug=bool(int(os.environ.get("HTTP_DEBUG", "0"))),
     )
-    '''
-    # Let the cache learn the token for future refreshes
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(CACHE.note_token(token))
-    except RuntimeError:
-        pass
-    '''
+    # If you want the cache to learn private tokens for refreshes, uncomment:
+    # try:
+    #     loop = asyncio.get_running_loop()
+    #     loop.create_task(CACHE.note_token(token))
+    # except RuntimeError:
+    #     pass
     return fm, token
 
 async def _call_threadsafe(fn, **kwargs):
     return await asyncio.to_thread(fn, **{k: v for k, v in kwargs.items() if v is not None})
 
 # ---------- NEW: Topology query tools + helpers ----------
-
 def _apply_sort(items: List[Dict[str, Any]], sort: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    sort = {"field": "cores_available", "direction": "desc"}  # asc|desc
-    """
     if not sort or not isinstance(sort, dict):
         return items
     field = sort.get("field")
@@ -115,7 +237,6 @@ def _apply_sort(items: List[Dict[str, Any]], sort: Optional[Dict[str, Any]]) -> 
         return items
     direction = (sort.get("direction") or "asc").lower()
     reverse = direction == "desc"
-    # Missing field -> None (sorted last)
     return sorted(items, key=lambda r: (r.get(field) is None, r.get(field)), reverse=reverse)
 
 def _paginate(items: List[Dict[str, Any]], limit: Optional[int], offset: int) -> List[Dict[str, Any]]:
@@ -124,9 +245,6 @@ def _paginate(items: List[Dict[str, Any]], limit: Optional[int], offset: int) ->
         return items[start:]
     return items[start : start + max(0, int(limit))]
 
-# Note: We do filtering within FabricManagerV2.query_* already via the filters dict.
-# To support sorting, we ask FM for a reasonably large page when sort is requested,
-# then apply sort+paginate here. Cap to avoid abuse.
 _MAX_FETCH_FOR_SORT = int(os.environ.get("MAX_FETCH_FOR_SORT", "5000"))
 
 @mcp.tool(
@@ -138,6 +256,7 @@ _MAX_FETCH_FOR_SORT = int(os.environ.get("MAX_FETCH_FOR_SORT", "5000"))
         "sort: {\"field\": \"name|cores_available|...\", \"direction\": \"asc|desc\"}"
     ),
 )
+@tool_logger("query-sites")
 async def query_sites(
     ctx: Context,
     toolCallId: Optional[str] = None,
@@ -150,7 +269,6 @@ async def query_sites(
     snap = CACHE.snapshot()
     items = list(snap.sites) if snap.sites else None
     if items is None:
-        # cold cache → live call (token required for this path)
         fm, id_token = _fabric_manager()
         fm_limit = _MAX_FETCH_FOR_SORT if sort else limit
         items = await _call_threadsafe(
@@ -168,6 +286,7 @@ async def query_sites(
         "filters: operator dicts; sort: {\"field\": \"cores_available\", \"direction\": \"desc\"}"
     ),
 )
+@tool_logger("query-hosts")
 async def query_hosts(
     ctx: Context,
     toolCallId: Optional[str] = None,
@@ -197,6 +316,7 @@ async def query_hosts(
         "filters: operator dicts; sort optional."
     ),
 )
+@tool_logger("query-facility-ports")
 async def query_facility_ports(
     ctx: Context,
     toolCallId: Optional[str] = None,
@@ -227,6 +347,7 @@ async def query_facility_ports(
         "{\"or\": [{\"name\": {\"icontains\": \"UCSD\"}}, {\"layer\": {\"eq\": \"L2\"}}]}"
     ),
 )
+@tool_logger("query-links")
 async def query_links(
     ctx: Context,
     toolCallId: Optional[str] = None,
@@ -247,17 +368,15 @@ async def query_links(
     items = _apply_sort(items, sort)
     return _paginate(items, limit=limit, offset=offset)
 
-# ---------- END NEW ----------
-
 # ---------------------------------------
-# Existing tools (your original ones) …
+# Existing tools (decorated for logs)
 # ---------------------------------------
-
 @mcp.tool(
     name="query-slices",
     title="Query Slices",
     description="Query slices with rich filters. Lists accept multiple values."
 )
+@tool_logger("query-slices")
 async def query_slices(
     ctx: Context,
     toolCallId: Optional[str] = None,
@@ -323,6 +442,7 @@ async def query_slices(
     title="List Slivers for a Slice",
     description="Return all slivers for a given slice_id."
 )
+@tool_logger("get-slivers")
 async def get_slivers(
     ctx: Context,
     slice_id: str,
@@ -345,6 +465,7 @@ async def get_slivers(
     title="Create Slice",
     description="Create a slice with a serialized graph model and SSH keys."
 )
+@tool_logger("create-slice")
 async def create_slice(
     ctx: Context,
     name: str,
@@ -375,6 +496,7 @@ async def create_slice(
     title="Modify Slice",
     description="Modify an existing slice to the provided graph model."
 )
+@tool_logger("modify-slice")
 async def modify_slice(
     ctx: Context,
     slice_id: str,
@@ -397,6 +519,7 @@ async def modify_slice(
     title="Accept Last Modify",
     description="Accept the last slice modify and return the accepted slice model."
 )
+@tool_logger("accept-modify")
 async def accept_modify(
     ctx: Context,
     slice_id: str,
@@ -417,6 +540,7 @@ async def accept_modify(
     title="Renew Slice",
     description="Extend a slice to a new lease_end_time (format: 'YYYY-MM-DD HH:MM:SS +0000')."
 )
+@tool_logger("renew-slice")
 async def renew_slice(
     ctx: Context,
     slice_id: str,
@@ -438,6 +562,7 @@ async def renew_slice(
     title="Delete Slice",
     description="Delete a slice by ID. If slice_id is omitted, deletes all user slices in project (use carefully)."
 )
+@tool_logger("delete-slice")
 async def delete_slice(
     ctx: Context,
     toolCallId: Optional[str] = None,
@@ -457,6 +582,7 @@ async def delete_slice(
     title="Query Resources",
     description="Return advertised resources (optionally filtered)."
 )
+@tool_logger("resources")
 async def resources(
     ctx: Context,
     level: int = 1,
@@ -487,6 +613,7 @@ async def resources(
     title="POA Create",
     description="Perform an operational action on a sliver (cpuinfo, numainfo, cpupin, numatune, reboot, addkey, removekey, rescan)."
 )
+@tool_logger("poa-create")
 async def poa_create(
     ctx: Context,
     sliver_id: str,
@@ -517,6 +644,7 @@ async def poa_create(
     title="POA Get",
     description="Get POA statuses by sliver_id or poa_id."
 )
+@tool_logger("poa-get")
 async def poa_get(
     ctx: Context,
     sliver_id: Optional[str] = None,
@@ -546,5 +674,7 @@ async def poa_get(
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     host = os.getenv("HOST", "0.0.0.0")
-    print(f"Starting FABRIC MCP (FastMCP) on http://{host}:{port}")
+    if UVICORN_ACCESS_LOG:
+        os.environ.setdefault("UVICORN_ACCESS_LOG", "true")
+    log.info("Starting FABRIC MCP (FastMCP) on http://%s:%s", host, port)
     mcp.run(transport="http", host=host, port=port)
