@@ -41,7 +41,7 @@ Authorization: Bearer <FABRIC_ID_TOKEN>
 
 ```
 
-Obtain tokens via the FABRIC Portal → **Profile → Access Tokens** (the token JSON contains `id_token`).
+Obtain tokens via the FABRIC Portal → **Experiments → Manage Tokens** (the token JSON contains `id_token`).
 
 This server **does not** read any local token/config files and **does not persist** tokens.
 
