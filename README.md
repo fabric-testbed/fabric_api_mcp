@@ -1,6 +1,6 @@
-# FABRIC Provisioning MCP Server
+# FABRIC API MCP Server
 
-A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC Testbed provisioning** and inventory queries through `fabric_manager_v2`, designed for secure, token-based use by LLM clients (ChatGPT MCP, VS Code, Claude Desktop, etc.).
+A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC Testbed API** and inventory queries through `fabric_manager_v2`, designed for secure, token-based use by LLM clients (ChatGPT MCP, VS Code, Claude Desktop, etc.).
 
 - **Stateless**: no user credentials stored; every call uses a **Bearer FABRIC ID token**
 - **Deterministic tools** with strong logging, request IDs, and JSON/text log formats
