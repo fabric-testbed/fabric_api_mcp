@@ -58,6 +58,7 @@ FABRIC Provisioning MCP Server (FastMCP + FastAPI)
 └─ FABRIC Orchestrator / APIs
 
 ```
+![Architecture](./images/fabric-api.png)
 
 - Access logs include a per-request **x-request-id** for tracing
 - Optional **ResourceCache**: background refresher for fast `query-*` responses
