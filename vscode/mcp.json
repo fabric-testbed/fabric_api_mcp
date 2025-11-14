@@ -1,0 +1,19 @@
+{
+	"servers": {
+		"fabric-reports": {
+			"type": "http",
+			"url": "https://alpha-5.fabric-testbed.net/mcp",
+			"headers": {
+				"Authorization": "Bearer ${input:fabric-token}"
+			},
+		}
+	},
+	"inputs": [
+		    {
+      "type": "promptString",
+      "id": "fabric-token",
+      "description": "Enter your FABRIC token",
+      "password": true
+    }
+    ]
+}
