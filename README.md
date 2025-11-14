@@ -221,19 +221,23 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 
 ```json
 {
-  "mcpServers": {
-    "fabric-provisioning": {
-      "type": "http",
-      "url": "https://YOUR_HOST/mcp",
-      "headers": {
-        "Authorization": "Bearer ${FABRIC_ID_TOKEN}"
-      },
-      "prompt": "./system.md",
-      "env": {
-        "FABRIC_ID_TOKEN": ""
-      }
+	"servers": {
+		"fabric-api": {
+			"type": "http",
+			"url": "https://alpha-5.fabric-testbed.net/mcp",
+			"headers": {
+				"Authorization": "Bearer ${input:fabric-token}"
+			},
+		}
+	},
+	"inputs": [
+		    {
+      "type": "promptString",
+      "id": "fabric-token",
+      "description": "Enter your FABRIC token",
+      "password": true
     }
-  }
+    ]
 }
 ```
 
@@ -242,9 +246,9 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 ```json
 {
   "mcpServers": {
-    "fabric-provisioning-remote": {
+    "fabric-api": {
       "command": "npx",
-      "args": ["mcp-remote", "https://YOUR_HOST/mcp",
+      "args": ["mcp-remote", "https://alpha-5.fabric-testbed/mcp",
         "--header", "Authorization: Bearer ${FABRIC_ID_TOKEN}"
       ],
       "env": { "FABRIC_ID_TOKEN": "" }
