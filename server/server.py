@@ -253,12 +253,12 @@ if hasattr(mcp, "app") and mcp.app:
     mcp.app.add_event_handler("shutdown", _on_shutdown)
 
 # Load system prompt for LLM context
-SYSTEM_TEXT = Path("/app/system.md").read_text(encoding="utf-8").strip()
+#SYSTEM_TEXT = Path("/app/system.md").read_text(encoding="utf-8").strip()
 
-@mcp.prompt(name="fabric-system")
-def fabric_system_prompt():
-    """MCP prompt that returns the FABRIC system instructions for LLMs."""
-    return SYSTEM_TEXT
+#@mcp.prompt(name="fabric-system")
+#def fabric_system_prompt():
+#    """MCP prompt that returns the FABRIC system instructions for LLMs."""
+ #   return SYSTEM_TEXT
 
 # ---------------------------------------
 # Helpers
