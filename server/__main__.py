@@ -26,7 +26,7 @@ from server.log_helper.config import configure_logging
 from server.dependencies import fabric_manager_factory
 from server.errors.handlers import register_error_handlers
 from server.middleware.access_log import register_middleware
-from resources_cache import ResourceCache
+from server.resources_cache import ResourceCache
 
 # Import log_helper and configure
 
