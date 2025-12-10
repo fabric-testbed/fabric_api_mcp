@@ -208,7 +208,7 @@ cd server
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-LOG_LEVEL=DEBUG PORT=5000 python server.py
+LOG_LEVEL=DEBUG PORT=5000 python __main__.py
 ```
 
 Then put your reverse proxy in front (or hit it directly if exposed).

@@ -7,7 +7,7 @@ services:
     container_name: fabric-prov-mcp
     image: fabric-prov-mcp:latest
     restart: always
-    # The MCP server uses port 5000 internally (as defined in server.py)
+    # The MCP server uses port 5000 internally (as defined in __main__.py)
     networks:
       - frontend
     # NOTE: We don't need 'ports:' here unless you want to access it directly from the host.
