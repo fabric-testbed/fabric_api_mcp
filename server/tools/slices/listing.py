@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastmcp.server.context import Context
-
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
@@ -14,7 +12,7 @@ from server.utils.async_helpers import call_threadsafe
 
 @tool_logger("query-slices")
 async def query_slices(
-    ctx: Context,
+    ctx: Any,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     as_self: bool = True,
@@ -97,7 +95,7 @@ async def query_slices(
 
 @tool_logger("get-slivers")
 async def get_slivers(
-    ctx: Context,
+    ctx: Any,
     slice_id: str,
     as_self: bool = True,
     toolCallId: Optional[str] = None,

@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastmcp.server.context import Context
-
 from server.config import config
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
@@ -28,7 +26,7 @@ def set_cache(cache):
 
 @tool_logger("query-sites")
 async def query_sites(
-    ctx: Context,
+    ctx: Any,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
@@ -56,7 +54,7 @@ async def query_sites(
 
 @tool_logger("query-hosts")
 async def query_hosts(
-    ctx: Context,
+    ctx: Any,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
@@ -83,7 +81,7 @@ async def query_hosts(
 
 @tool_logger("query-facility-ports")
 async def query_facility_ports(
-    ctx: Context,
+    ctx: Any,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
@@ -109,7 +107,7 @@ async def query_facility_ports(
 
 @tool_logger("query-links")
 async def query_links(
-    ctx: Context,
+    ctx: Any,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,

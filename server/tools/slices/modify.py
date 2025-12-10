@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastmcp.server.context import Context
-
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
@@ -14,7 +12,7 @@ from server.utils.async_helpers import call_threadsafe
 
 @tool_logger("modify-slice")
 async def modify_slice(
-    ctx: Context,
+    ctx: Any,
     slice_id: str,
     graph_model: str,
     toolCallId: Optional[str] = None,
@@ -43,7 +41,7 @@ async def modify_slice(
 
 @tool_logger("accept-modify")
 async def accept_modify(
-    ctx: Context,
+    ctx: Any,
     slice_id: str,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
