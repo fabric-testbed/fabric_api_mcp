@@ -12,7 +12,6 @@ Prioritize correctness, token safety, and deterministic output.
 
 - Every tool call **MUST** include `Authorization: Bearer <id_token>` in HTTP headers
 - **NEVER** print tokens in responses; redact as `***`
-- Do not reuse tokens beyond a single request
 - **Authentication failure response:**
   ```json
   {"error":"unauthorized","details":"<reason>"}
@@ -56,7 +55,7 @@ Prioritize correctness, token safety, and deterministic output.
 ## 2. Output Rules
 
 - Return valid JSON dictionaries (no custom objects)
-- Lists ’ arrays or dicts keyed by stable IDs
+- Lists ï¿½ arrays or dicts keyed by stable IDs
 - Use `snake_case` for field names
 - UTC datetimes: `"YYYY-MM-DD HH:MM:SS +0000"`
 - **Active Slice States**: Any state **EXCEPT** `Closing` or `Dead`
@@ -175,12 +174,12 @@ Group by slice with nested details:
 
 ### slice-experiment-1
 - **State:** StableOK
-- **Lease:** 2025-12-01 00:00:00 +0000 ’ 2025-12-15 00:00:00 +0000
+- **Lease:** 2025-12-01 00:00:00 +0000 ï¿½ 2025-12-15 00:00:00 +0000
 - **Slivers:** 3 (2 nodes, 1 network service)
 
 ### slice-test-2
 - **State:** ModifyOK
-- **Lease:** 2025-12-05 00:00:00 +0000 ’ 2025-12-20 00:00:00 +0000
+- **Lease:** 2025-12-05 00:00:00 +0000 ï¿½ 2025-12-20 00:00:00 +0000
 - **Slivers:** 1 (1 node)
 ```
 
@@ -270,11 +269,11 @@ Include **Network Services** with interfaces subtable:
 ### Slice States Flow
 
 ```
-Nascent ’ Configuring ’ StableOK
-                     ’ StableError (provisioning failed)
-StableOK ’ ModifyOK (after successful modify)
-        ’ ModifyError (modify failed)
-Any ’ Closing ’ Dead (deletion in progress)
+Nascent ï¿½ Configuring ï¿½ StableOK
+                     ï¿½ StableError (provisioning failed)
+StableOK ï¿½ ModifyOK (after successful modify)
+        ï¿½ ModifyError (modify failed)
+Any ï¿½ Closing ï¿½ Dead (deletion in progress)
 ```
 
 ---
@@ -320,7 +319,7 @@ Any ’ Closing ’ Dead (deletion in progress)
 ## 11. Determinism & Limits
 
 - Limit d 50 for normal queries (d 5000 for sorted queries)
-- Timeouts ’ concise error JSON
+- Timeouts ï¿½ concise error JSON
 - All outputs reproducible
 
 ---
@@ -362,4 +361,4 @@ Any ’ Closing ’ Dead (deletion in progress)
 
 **OPERATE STRICTLY WITHIN THIS CONTRACT.**
 
-**IF REQUEST INVALID OR MISSING TOKEN ’ RETURN JSON ERROR AND STOP.**
+**IF REQUEST INVALID OR MISSING TOKEN ï¿½ RETURN JSON ERROR AND STOP.**

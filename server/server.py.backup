@@ -9,7 +9,7 @@ and resource operations through a unified FastMCP interface.
 Key Features:
 - Background caching of topology data (sites, hosts, facility ports, links)
 - Bearer token authentication for secure API access
-- Structured logging with request tracing
+- Structured log_helper with request tracing
 - Async tool execution with performance monitoring
 """
 from __future__ import annotations
@@ -51,14 +51,14 @@ print(f"Core API HOST: {FABRIC_CORE_API_HOST}")
 # ---------------------------------------
 # Logging setup
 # ---------------------------------------
-# Configurable logging: supports both human-readable text and machine-parseable JSON formats
+# Configurable log_helper: supports both human-readable text and machine-parseable JSON formats
 LOG_LEVEL  = os.environ.get("LOG_LEVEL", "INFO").upper()
 LOG_FORMAT = os.environ.get("LOG_FORMAT", "text").lower()  # "text" | "json"
 UVICORN_ACCESS_LOG = os.environ.get("UVICORN_ACCESS_LOG", "1") not in ("0", "false", "False")
 
 class _JsonFormatter(logging.Formatter):
     """
-    Custom JSON formatter for structured logging.
+    Custom JSON formatter for structured log_helper.
 
     Outputs log records as JSON objects with standard fields (timestamp, level, logger, message)
     plus any extra context fields like request_id, tool name, duration, etc.
@@ -124,7 +124,7 @@ mcp = FastMCP(
 # ---------------------------------------
 # Access log middleware (FastAPI)
 # ---------------------------------------
-# Adds HTTP request/response logging with request ID tracing for debugging
+# Adds HTTP request/response log_helper with request ID tracing for debugging
 if hasattr(mcp, "app") and mcp.app:
     from fastapi import Request
     @mcp.app.middleware("http")
@@ -159,11 +159,11 @@ if hasattr(mcp, "app") and mcp.app:
         return response
 
 # ---------------------------------------
-# Tool logging decorator
+# Tool log_helper decorator
 # ---------------------------------------
 def tool_logger(tool_name: str):
     """
-    Decorator that wraps MCP tool functions with logging and timing.
+    Decorator that wraps MCP tool functions with log_helper and timing.
 
     Logs tool invocation start/end with request IDs for tracing, execution duration,
     and result size. Helps track performance and debug issues.
