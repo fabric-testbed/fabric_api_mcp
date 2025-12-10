@@ -26,7 +26,7 @@ def set_cache(cache):
 
 @tool_logger("query-sites")
 async def query_sites(
-    ctx: Any,
+    
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
@@ -54,7 +54,7 @@ async def query_sites(
 
 @tool_logger("query-hosts")
 async def query_hosts(
-    ctx: Any,
+    
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
@@ -81,7 +81,7 @@ async def query_hosts(
 
 @tool_logger("query-facility-ports")
 async def query_facility_ports(
-    ctx: Any,
+    
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
@@ -107,7 +107,7 @@ async def query_facility_ports(
 
 @tool_logger("query-links")
 async def query_links(
-    ctx: Any,
+    
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     filters: Optional[Dict[str, Any]] = None,
