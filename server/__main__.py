@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from fastmcp import FastMCP
 
@@ -106,6 +107,17 @@ if hasattr(mcp, "app") and mcp.app:
 # Register all tools declared in server.tools.*.
 for tool in ALL_TOOLS:
     mcp.tool(tool)
+
+# ---------------------------------------
+# MCP Prompt: fabric-system
+# ---------------------------------------
+SYSTEM_TEXT = Path(__file__).resolve().parent.joinpath("system.md").read_text(encoding="utf-8").strip()
+
+
+@mcp.prompt(name="fabric-system")
+def fabric_system_prompt():
+    """Expose the FABRIC system instructions as an MCP prompt."""
+    return SYSTEM_TEXT
 
 
 # ---------------------------------------

@@ -12,11 +12,11 @@ from server.utils.async_helpers import call_threadsafe
 
 @tool_logger("modify-slice")
 async def modify_slice(
-    ctx: Any = None,
     slice_id: str,
     graph_model: str,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
+    ctx: Any = None,
 ) -> List[Dict[str, Any]]:
     """
     Modify an existing FABRIC slice topology.
@@ -41,10 +41,10 @@ async def modify_slice(
 
 @tool_logger("accept-modify")
 async def accept_modify(
-    ctx: Any = None,
     slice_id: str,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
+    ctx: Any = None,
 ) -> Dict[str, Any]:
     """
     Accept pending slice modifications.
