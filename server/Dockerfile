@@ -20,11 +20,11 @@ RUN useradd -m -u 10001 appuser
 WORKDIR /app
 
 # Leverage layer caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # App code (package + resources)
-COPY . /app
+COPY . /app/server
 
 # Use an unprivileged user
 USER appuser
