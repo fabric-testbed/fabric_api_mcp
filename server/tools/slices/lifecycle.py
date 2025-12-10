@@ -12,13 +12,13 @@ from server.utils.async_helpers import call_threadsafe
 
 @tool_logger("create-slice")
 async def create_slice(
-    ctx: Any = None,
     name: str,
     graph_model: str,
     ssh_keys: List[str],
     lifetime: Optional[int] = None,
     lease_start_time: Optional[str] = None,
     lease_end_time: Optional[str] = None,
+    ctx: Any = None,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -53,9 +53,9 @@ async def create_slice(
 
 @tool_logger("renew-slice")
 async def renew_slice(
-    ctx: Any = None,
     slice_id: str,
     lease_end_time: str,
+    ctx: Any = None,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
