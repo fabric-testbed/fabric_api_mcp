@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastmcp import Any
-
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
