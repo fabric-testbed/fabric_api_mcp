@@ -95,9 +95,9 @@ async def query_slices(
 
 @tool_logger("get-slivers")
 async def get_slivers(
-    ctx: Any = None,
     slice_id: str,
     as_self: bool = True,
+    ctx: Any = None,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -105,7 +105,7 @@ async def get_slivers(
     List all slivers (resource allocations) in a slice.
 
     Args:
-        slice_id: UUID of the slice containing the slivers.
+        slice_id (str): UUID of the slice containing the slivers.
         as_self: If True, list as owner; if False, list with delegated access.
 
     Returns:
