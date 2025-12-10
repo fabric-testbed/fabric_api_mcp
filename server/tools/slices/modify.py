@@ -16,7 +16,6 @@ async def modify_slice(
     graph_model: str,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
-    ctx: Any = None,
 ) -> List[Dict[str, Any]]:
     """
     Modify an existing FABRIC slice topology.
@@ -44,7 +43,7 @@ async def accept_modify(
     slice_id: str,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
-    ctx: Any = None,
+    
 ) -> Dict[str, Any]:
     """
     Accept pending slice modifications.
