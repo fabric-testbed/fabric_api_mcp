@@ -20,12 +20,11 @@ RUN useradd -m -u 10001 appuser
 WORKDIR /app
 
 # Leverage layer caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# App code
-COPY *.py /app/
-COPY system.md /app/
+# App code (package + resources)
+COPY . /app/server
 
 # Use an unprivileged user
 USER appuser
@@ -36,5 +35,5 @@ EXPOSE ${PORT}
 # Healthcheck uses a simple TCP probe so we don't depend on a specific HTTP route
 HEALTHCHECK --interval=30s --timeout=3s --retries=5 CMD bash -c "exec 3<>/dev/tcp/127.0.0.1/${PORT} && exit 0 || exit 1"
 
-# Start the FastMCP HTTP server (the script reads PORT env)
-CMD ["python", "/app/server.py"]
+# Start the FastMCP HTTP server (the module reads PORT env)
+CMD ["python", "-m", "server"]

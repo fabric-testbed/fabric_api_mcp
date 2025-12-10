@@ -71,9 +71,12 @@ FABRIC Provisioning MCP Server (FastMCP + FastAPI)
 
 .
 ├─ server/
-│  ├─ server.py              # <— Your MCP server (provided)
-│  ├─ resources_cache.py     # cache implementation (used by server.py)
+│  ├─ __main__.py            # FastMCP entrypoint (`python -m server`)
+│  ├─ resources_cache.py     # background cache
 │  ├─ system.md              # system prompt served via @mcp.prompt("fabric-system")
+│  ├─ tools/
+│  │  ├─ topology.py         # topology query tools
+│  │  └─ slices/             # slice tools split by concern
 │  ├─ requirements.txt
 │  └─ Dockerfile
 ├─ nginx/
@@ -197,6 +200,12 @@ server {
 }
 ```
 
+## Adding new tools
+
+- Add your tool function to an existing module under `server/tools/` (or create a new one) and include it in that module’s `TOOLS` list.
+- If you add a new module, import it in `server/tools/__init__.py` and append its `TOOLS` to `ALL_TOOLS`.
+- `__main__.py` auto-registers everything in `ALL_TOOLS`, so no extra wiring is needed after export.
+
 > The MCP server runs on port **5000** in the container (`mcp.run(transport="http", host=0.0.0.0, port=5000)`).
 
 ---
@@ -208,7 +217,7 @@ cd server
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-LOG_LEVEL=DEBUG PORT=5000 python server.py
+LOG_LEVEL=DEBUG PORT=5000 python __main__.py
 ```
 
 Then put your reverse proxy in front (or hit it directly if exposed).
