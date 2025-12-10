@@ -104,8 +104,6 @@ if hasattr(mcp, "app") and mcp.app:
 # ---------------------------------------
 
 # Register all tools declared in server.tools.*.
-# pass_context=True tells FastMCP to ignore the first ctx argument for schema generation.
-#_EXCLUDE_ARGS = ("ctx", "toolCallId", "tool_call_id")
 for tool in ALL_TOOLS:
     mcp.tool(tool)
 

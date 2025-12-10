@@ -12,7 +12,7 @@ from server.utils.async_helpers import call_threadsafe
 
 @tool_logger("modify-slice")
 async def modify_slice(
-    ctx: Any,
+    ctx: Any = None,
     slice_id: str,
     graph_model: str,
     toolCallId: Optional[str] = None,
@@ -41,7 +41,7 @@ async def modify_slice(
 
 @tool_logger("accept-modify")
 async def accept_modify(
-    ctx: Any,
+    ctx: Any = None,
     slice_id: str,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,

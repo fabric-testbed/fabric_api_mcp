@@ -12,7 +12,7 @@ from server.utils.async_helpers import call_threadsafe
 
 @tool_logger("create-slice")
 async def create_slice(
-    ctx: Any,
+    ctx: Any = None,
     name: str,
     graph_model: str,
     ssh_keys: List[str],
@@ -53,7 +53,7 @@ async def create_slice(
 
 @tool_logger("renew-slice")
 async def renew_slice(
-    ctx: Any,
+    ctx: Any = None,
     slice_id: str,
     lease_end_time: str,
     toolCallId: Optional[str] = None,
@@ -78,7 +78,7 @@ async def renew_slice(
 
 @tool_logger("delete-slice")
 async def delete_slice(
-    ctx: Any,
+    ctx: Any = None,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     slice_id: Optional[str] = None,
