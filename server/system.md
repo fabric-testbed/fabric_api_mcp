@@ -29,6 +29,12 @@ Prioritize correctness, token safety, and deterministic output.
 | `query-hosts` | List worker hosts | site, name, cores_*, ram_*, disk_*, components |
 | `query-facility-ports` | List facility network ports | site, name, vlans, port, switch, labels |
 | `query-links` | List L2/L3 network links | name, layer, bandwidth, endpoints[{site,node,port}] |
+| `show-my-projects` | List Core API project info for the user | name, uuid, memberships, tags |
+| `list-project-users` | List users in a project | user_uuid, email, name, role |
+| `get-user-keys` | Fetch SSH/public keys for a user | keytype, fingerprint, public_key, comment |
+| `add-public-key` | Add a public key to a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
+| `remove-public-key` | Remove a public key from a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
+| `os-reboot` | Reboot a NodeSliver via POA | sliver_id (NodeSliver) |
 
 ### Slice Management Tools
 
@@ -63,40 +69,325 @@ Prioritize correctness, token safety, and deterministic output.
 
 ---
 
-## 3. Filters
+## 3. Lambda Filters
 
-### Supported Operators
+All query tools (`query-sites`, `query-hosts`, `query-facility-ports`, `query-links`) support **Python lambda functions** for filtering.
 
-`eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in`, `contains`, `icontains`, `regex`, `any`, `all`
+### Lambda Filter Syntax
 
-### Logical OR
+Pass a **string** containing a Python lambda expression that takes a record dict `r` and returns `bool`:
 
-```json
-{"or": [{"site": {"icontains": "UCSD"}}, {"site": {"icontains": "STAR"}}]}
+```python
+lambda r: <boolean expression>
 ```
 
-### Case-Insensitive Matching
-
-Use `icontains` or regex `(?i)` flag:
-
-```json
-{"site": {"icontains": "ucsd"}}
-{"site": {"regex": "(?i)ucsd"}}
-```
-
-### Example: Hosts at UCSD/STAR with e32 cores
+**Important**: In MCP tool calls, pass the lambda as a **string**, not as code:
 
 ```json
 {
-  "filters": {
-    "or": [
-      {"site": {"icontains": "UCSD"}},
-      {"site": {"icontains": "STAR"}}
-    ],
-    "cores_available": {"gte": 32}
-  }
+  "id_token": "Bearer xxx",
+  "filters": "lambda r: r.get('cores_available', 0) >= 64"
 }
 ```
+
+### Site Record Fields
+
+Sites returned by `query-sites` have these fields:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `name` | str | Site identifier | `"SRI"`, `"RENC"`, `"UCSD"` |
+| `state` | str/null | Site state | `null`, `"Active"` |
+| `address` | str | Physical address | `"333 Ravenswood Avenue..."` |
+| `location` | [float, float] | [latitude, longitude] | `[37.4566052, -122.174686]` |
+| `ptp_capable` | bool | PTP clock support | `true`, `false` |
+| `ipv4_management` | bool | IPv4 management | `true`, `false` |
+| `cores_capacity` | int | Total CPU cores | `384` |
+| `cores_allocated` | int | Cores in use | `90` |
+| `cores_available` | int | Cores free | `294` |
+| `ram_capacity` | int | Total RAM (GB) | `1434` |
+| `ram_allocated` | int | RAM in use (GB) | `408` |
+| `ram_available` | int | RAM free (GB) | `1026` |
+| `disk_capacity` | int | Total disk (GB) | `56618` |
+| `disk_allocated` | int | Disk in use (GB) | `1410` |
+| `disk_available` | int | Disk free (GB) | `55208` |
+| `hosts` | list[str] | Worker hostnames | `["sri-w1.fabric...", ...]` |
+| `components` | dict | Component details (GPUs, NICs, FPGAs) | `{"GPU": {...}, "NIC": {...}}` |
+
+### Common Filter Patterns
+
+#### Filter by available resources
+
+```python
+# Sites with ≥64 cores available
+lambda r: r.get('cores_available', 0) >= 64
+
+# Sites with ≥256 GB RAM available
+lambda r: r.get('ram_available', 0) >= 256
+
+# Sites with ≥10 TB disk available
+lambda r: r.get('disk_available', 0) >= 10000
+```
+
+#### Filter by site name
+
+```python
+# Exact match
+lambda r: r.get('name') == 'RENC'
+
+# Case-insensitive substring match
+lambda r: 'ucsd' in r.get('name', '').lower()
+
+# Multiple sites (OR logic)
+lambda r: r.get('name') in ['RENC', 'UCSD', 'STAR']
+```
+
+#### Filter by capabilities
+
+```python
+# PTP-capable sites
+lambda r: r.get('ptp_capable') == True
+
+# Sites with IPv4 management
+lambda r: r.get('ipv4_management') == True
+```
+
+#### Filter by components
+
+```python
+# Sites with GPUs
+lambda r: 'GPU' in r.get('components', {})
+
+# Sites with specific GPU model
+lambda r: any('RTX' in str(gpu) for gpu in r.get('components', {}).get('GPU', {}).values())
+
+# Sites with ConnectX-6 NICs
+lambda r: any('ConnectX-6' in str(nic) for nic in r.get('components', {}).get('NIC', {}).values())
+```
+
+#### Complex multi-condition filters
+
+```python
+# Sites with ≥32 cores AND ≥128 GB RAM available
+lambda r: r.get('cores_available', 0) >= 32 and r.get('ram_available', 0) >= 128
+
+# RENC, UCSD, or STAR sites with ≥64 cores
+lambda r: r.get('name') in ['RENC', 'UCSD', 'STAR'] and r.get('cores_available', 0) >= 64
+
+# Sites with GPUs AND at least 100 cores available
+lambda r: 'GPU' in r.get('components', {}) and r.get('cores_available', 0) >= 100
+```
+
+### Host Record Fields
+
+Hosts returned by `query-hosts` have these fields:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `name` | str | Worker hostname | `"ucsd-w5.fabric-testbed.net"` |
+| `site` | str | Site name | `"UCSD"`, `"RENC"` |
+| `cores_capacity` | int | Total CPU cores | `128` |
+| `cores_allocated` | int | Cores in use | `38` |
+| `cores_available` | int | Cores free | `90` |
+| `ram_capacity` | int | Total RAM (GB) | `478` |
+| `ram_allocated` | int | RAM in use (GB) | `76` |
+| `ram_available` | int | RAM free (GB) | `402` |
+| `disk_capacity` | int | Total disk (GB) | `2233` |
+| `disk_allocated` | int | Disk in use (GB) | `2200` |
+| `disk_available` | int | Disk free (GB) | `33` |
+| `components` | dict | Component details | `{"GPU-Tesla T4": {"capacity": 2, "allocated": 0}}` |
+
+**Component Structure**: Each component is a dict key with `capacity` and `allocated` values:
+```json
+{
+  "GPU-Tesla T4": {"capacity": 2, "allocated": 0},
+  "SmartNIC-ConnectX-5": {"capacity": 2, "allocated": 0},
+  "NVME-P4510": {"capacity": 4, "allocated": 0},
+  "SharedNIC-ConnectX-6": {"capacity": 127, "allocated": 8}
+}
+```
+
+### Host Filter Patterns
+
+#### Filter by site and resources
+
+```python
+# Hosts at UCSD
+lambda r: r.get('site') == 'UCSD'
+
+# Hosts at UCSD or RENC
+lambda r: r.get('site') in ['UCSD', 'RENC']
+
+# Hosts with ≥32 cores available
+lambda r: r.get('cores_available', 0) >= 32
+
+# Hosts with ≥128 GB RAM available
+lambda r: r.get('ram_available', 0) >= 128
+```
+
+#### Filter by components
+
+```python
+# Hosts with any GPU
+lambda r: any('GPU' in comp for comp in r.get('components', {}).keys())
+
+# Hosts with Tesla T4 GPUs
+lambda r: 'GPU-Tesla T4' in r.get('components', {})
+
+# Hosts with available Tesla T4 GPUs
+lambda r: r.get('components', {}).get('GPU-Tesla T4', {}).get('capacity', 0) > r.get('components', {}).get('GPU-Tesla T4', {}).get('allocated', 0)
+
+# Hosts with ConnectX-6 NICs
+lambda r: any('ConnectX-6' in comp for comp in r.get('components', {}).keys())
+
+# Hosts with NVMe storage
+lambda r: any('NVME' in comp for comp in r.get('components', {}).keys())
+
+# Hosts with SmartNICs
+lambda r: any('SmartNIC' in comp for comp in r.get('components', {}).keys())
+```
+
+#### Complex host filters
+
+```python
+# UCSD hosts with ≥32 cores AND GPUs
+lambda r: r.get('site') == 'UCSD' and r.get('cores_available', 0) >= 32 and any('GPU' in comp for comp in r.get('components', {}).keys())
+
+# Hosts with ≥64 cores, ≥256 GB RAM, and Tesla T4 GPUs
+lambda r: (
+    r.get('cores_available', 0) >= 64 and
+    r.get('ram_available', 0) >= 256 and
+    'GPU-Tesla T4' in r.get('components', {})
+)
+
+# Hosts at multiple sites with available GPUs
+lambda r: (
+    r.get('site') in ['UCSD', 'RENC', 'STAR'] and
+    any('GPU' in comp for comp in r.get('components', {}).keys()) and
+    any(r.get('components', {}).get(comp, {}).get('capacity', 0) > r.get('components', {}).get(comp, {}).get('allocated', 0)
+        for comp in r.get('components', {}).keys() if 'GPU' in comp)
+)
+```
+
+### Link Record Fields
+
+Links returned by `query-links` have these fields:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `name` | str | Link identifier | `"link:local-port+losa-data-sw:HundredGigE0/0/0/15..."` |
+| `layer` | str | Network layer | `"L1"`, `"L2"` |
+| `labels` | dict/null | Additional metadata | `null` or `{...}` |
+| `bandwidth` | int | Bandwidth in Gbps | `80`, `100` |
+| `endpoints` | list[dict] | Connection endpoints | See structure below |
+
+**Endpoint Structure**: Each endpoint has:
+```json
+{
+  "site": null,
+  "node": "78157dfa-cef2-4247-be58-c1a5611aa460",
+  "port": "HundredGigE0/0/0/15.3370"
+}
+```
+
+Note: `site` is typically null in link endpoints.
+
+### Link Filter Patterns
+
+```python
+# Links with ≥100 Gbps bandwidth
+lambda r: r.get('bandwidth', 0) >= 100
+
+# L1 links only
+lambda r: r.get('layer') == 'L1'
+
+# L2 links only
+lambda r: r.get('layer') == 'L2'
+
+# High-bandwidth L1 links
+lambda r: r.get('layer') == 'L1' and r.get('bandwidth', 0) >= 80
+
+# Links with specific port type (HundredGigE)
+lambda r: any('HundredGigE' in ep.get('port', '') for ep in r.get('endpoints', []))
+
+# Links with TenGigE ports
+lambda r: any('TenGigE' in ep.get('port', '') for ep in r.get('endpoints', []))
+
+# Links connecting specific switches (by name)
+lambda r: 'ucsd-data-sw' in r.get('name', '').lower()
+
+# Links between specific switches
+lambda r: (
+    'losa-data-sw' in r.get('name', '').lower() and
+    'ucsd-data-sw' in r.get('name', '').lower()
+)
+```
+
+### Facility Port Record Fields
+
+Facility ports returned by `query-facility-ports` have these fields:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `site` | str | Site name | `"BRIST"`, `"STAR"`, `"UCSD"`, `"GCP"` |
+| `name` | str | Facility port name | `"SmartInternetLab-BRIST"`, `"StarLight-400G-1-STAR"` |
+| `port` | str | Port identifier | `"SmartInternetLab-BRIST-int"` |
+| `switch` | str | Switch port mapping | `"port+brist-data-sw:HundredGigE0/0/0/21:facility+..."` |
+| `labels` | dict | Metadata including vlan_range | `{"vlan_range": ["3110-3119"], "region": "sjc-zone2-6"}` |
+| `vlans` | str | String representation of VLAN ranges | `"['3110-3119']"` or `"['2-3002', '3004-3005']"` |
+
+**Labels Structure**: Contains vlan_range and optional fields:
+```json
+{
+  "vlan_range": ["3110-3119"],
+  "local_name": "Bundle-Ether110",
+  "device_name": "agg4.sanj",
+  "region": "sjc-zone2-6"
+}
+```
+
+Note: `vlans` is a **string** (not a list), representing VLAN ranges.
+
+### Facility Port Filter Patterns
+
+```python
+# Ports at specific site
+lambda r: r.get('site') == 'UCSD'
+
+# Ports at multiple sites
+lambda r: r.get('site') in ['UCSD', 'STAR', 'BRIST']
+
+# Ports by name pattern
+lambda r: 'NRP' in r.get('name', '')
+
+# Ports with specific VLAN range (check labels)
+lambda r: '3110-3119' in r.get('labels', {}).get('vlan_range', [])
+
+# Cloud facility ports (by site)
+lambda r: r.get('site') in ['GCP', 'AWS', 'AZURE']
+
+# Ports with wide VLAN range (multiple ranges in labels)
+lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2
+
+# Ports with specific region in labels
+lambda r: r.get('labels', {}).get('region') == 'sjc-zone2-6'
+
+# StarLight facility ports (by name pattern)
+lambda r: 'StarLight' in r.get('name', '')
+
+# 400G ports (by name pattern)
+lambda r: '400G' in r.get('name', '')
+
+# Ports with HundredGigE switch ports
+lambda r: 'HundredGigE' in r.get('switch', '')
+```
+
+### Important Notes
+
+- **Always use `.get()` with defaults** to handle missing fields: `r.get('field', 0)`
+- **Type safety**: Ensure comparisons match field types (int for numbers, str for names)
+- **Case sensitivity**: Use `.lower()` for case-insensitive string matching
+- **Null safety**: Check for `None` values: `r.get('field') is not None`
 
 ---
 
@@ -219,6 +510,8 @@ Include **Network Services** with interfaces subtable:
 
 ### Fetch Active Slices
 
+Use `exclude_slice_state` parameter (not a lambda filter):
+
 ```json
 {
   "exclude_slice_state": ["Closing", "Dead"]
@@ -226,6 +519,8 @@ Include **Network Services** with interfaces subtable:
 ```
 
 ### Fetch Slices in Error State
+
+Use `slice_state` parameter (not a lambda filter):
 
 ```json
 {
@@ -235,24 +530,141 @@ Include **Network Services** with interfaces subtable:
 
 ### Find High-Memory Hosts
 
-```json
+Use lambda filter with sorting and pagination:
+
+```python
+# Lambda filter
+filters = "lambda r: r.get('ram_available', 0) >= 256"
+
+# With sorting (handled by tool parameters, not lambda)
 {
-  "filters": {
-    "ram_available": {"gte": 256}
-  },
+  "filters": "lambda r: r.get('ram_available', 0) >= 256",
   "sort": {"field": "ram_available", "direction": "desc"},
   "limit": 10
 }
 ```
 
+### Find Hosts with Specific GPUs
+
+```python
+# Any GPU
+filters = "lambda r: any('GPU' in comp for comp in r.get('components', {}).keys())"
+
+# Tesla T4 specifically
+filters = "lambda r: 'GPU-Tesla T4' in r.get('components', {})"
+
+# Available Tesla T4 (not fully allocated)
+filters = "lambda r: r.get('components', {}).get('GPU-Tesla T4', {}).get('capacity', 0) > r.get('components', {}).get('GPU-Tesla T4', {}).get('allocated', 0)"
+```
+
+### Find Hosts with High-Speed NICs
+
+```python
+# ConnectX-6 NICs
+filters = "lambda r: any('ConnectX-6' in comp for comp in r.get('components', {}).keys())"
+
+# SmartNICs
+filters = "lambda r: any('SmartNIC' in comp for comp in r.get('components', {}).keys())"
+```
+
+### Find UCSD Hosts with GPUs and High Resources
+
+```python
+filters = "lambda r: r.get('site') == 'UCSD' and r.get('cores_available', 0) >= 32 and r.get('ram_available', 0) >= 128 and any('GPU' in comp for comp in r.get('components', {}).keys())"
+```
+
 ### Find Sites with GPUs
 
-```json
+Use lambda filter with component checking:
+
+```python
+# Lambda filter
+filters = "lambda r: 'GPU' in r.get('components', {})"
+
+# Full request
 {
-  "filters": {
-    "components": {"regex": "(?i)gpu"}
-  }
+  "filters": "lambda r: 'GPU' in r.get('components', {})"
 }
+```
+
+### Find Sites at Specific Locations
+
+```python
+# Sites in California (by name pattern)
+filters = "lambda r: r.get('name') in ['UCSD', 'UCY', 'LBNL', 'SRI', 'DALL']"
+
+# Sites with PTP capability
+filters = "lambda r: r.get('ptp_capable') == True"
+```
+
+### Find Sites with High Availability
+
+```python
+# Sites with ≥64 cores AND ≥256 GB RAM available
+filters = "lambda r: r.get('cores_available', 0) >= 64 and r.get('ram_available', 0) >= 256"
+```
+
+### Find High-Bandwidth Links
+
+```python
+# Links with ≥100 Gbps bandwidth
+filters = "lambda r: r.get('bandwidth', 0) >= 100"
+
+# L1 links with ≥80 Gbps
+filters = "lambda r: r.get('layer') == 'L1' and r.get('bandwidth', 0) >= 80"
+```
+
+### Find Links by Port Type
+
+```python
+# Links with HundredGigE ports
+filters = "lambda r: any('HundredGigE' in ep.get('port', '') for ep in r.get('endpoints', []))"
+
+# Links with TenGigE ports
+filters = "lambda r: any('TenGigE' in ep.get('port', '') for ep in r.get('endpoints', []))"
+```
+
+### Find Links Between Specific Switches
+
+```python
+# Links connecting to UCSD switch
+filters = "lambda r: 'ucsd-data-sw' in r.get('name', '').lower()"
+
+# Links between LOSA and UCSD switches
+filters = "lambda r: 'losa-data-sw' in r.get('name', '').lower() and 'ucsd-data-sw' in r.get('name', '').lower()"
+```
+
+### Find Facility Ports at Specific Sites
+
+```python
+# Ports at UCSD
+filters = "lambda r: r.get('site') == 'UCSD'"
+
+# Cloud facility ports
+filters = "lambda r: r.get('site') in ['GCP', 'AWS', 'AZURE']"
+```
+
+### Find Facility Ports by Type
+
+```python
+# StarLight ports
+filters = "lambda r: 'StarLight' in r.get('name', '')"
+
+# 400G ports
+filters = "lambda r: '400G' in r.get('name', '')"
+
+# NRP (National Research Platform) ports
+filters = "lambda r: 'NRP' in r.get('name', '')"
+```
+
+### Find Facility Ports with Specific VLANs
+
+```python
+# Ports with specific VLAN range
+filters = "lambda r: '3110-3119' in r.get('labels', {}).get('vlan_range', [])"
+
+# Ports with wide VLAN range (multiple ranges available)
+filters = "lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2"
 ```
 
 ---

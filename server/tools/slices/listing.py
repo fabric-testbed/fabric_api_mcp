@@ -12,7 +12,7 @@ from server.utils.async_helpers import call_threadsafe
 
 @tool_logger("query-slices")
 async def query_slices(
-    ctx: Any = None,
+    
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     as_self: bool = True,
@@ -95,9 +95,9 @@ async def query_slices(
 
 @tool_logger("get-slivers")
 async def get_slivers(
+    
     slice_id: str,
     as_self: bool = True,
-    ctx: Any = None,
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
