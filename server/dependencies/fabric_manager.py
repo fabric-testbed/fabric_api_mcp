@@ -40,6 +40,7 @@ class FabricManagerFactory:
         fm = FabricManagerV2(
             credmgr_host=self.config.credmgr_host,
             orchestrator_host=self.config.orchestrator_host,
+            core_api_host=self.config.core_api_host,
             http_debug=self.config.http_debug,
         )
         return fm, token
