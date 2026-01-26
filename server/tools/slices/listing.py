@@ -3,23 +3,24 @@ Slice listing and inspection tools for FABRIC MCP Server.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
+from server.utils.data_helpers import normalize_list_param
 
 
 @tool_logger("query-slices")
 async def query_slices(
-    
+
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     as_self: bool = True,
     slice_id: Optional[str] = None,
     slice_name: Optional[str] = None,
-    slice_state: Optional[List[str]] = None,
-    exclude_slice_state: Optional[List[str]] = None,
+    slice_state: Optional[Union[str, List[str]]] = None,
+    exclude_slice_state: Optional[Union[str, List[str]]] = None,
     offset: int = 0,
     limit: int = 200,
     fetch_all: bool = True,
@@ -31,8 +32,10 @@ async def query_slices(
         slice_id: slice GUID
         slice_name: slice name
         slice_state: Optional list of slice states to include (e.g., ["StableError", "StableOK"]).
+                     Can be passed as a list or a JSON string.
                      Allowed values: (Nascent, Configuring, StableOK, StableError, ModifyOK, ModifyError, Closing, Dead).
         exclude_slice_state: Optional list of slice states to exclude (e.g., for fetching active slices set exclude_states=["Closing", "Dead"]).
+                             Can be passed as a list or a JSON string.
         as_self: If True, list only user's own slices; if False, list all accessible slices.
         limit: Maximum number of slices to return (default: 200).
         offset: Pagination offset (default: 0).
@@ -41,6 +44,10 @@ async def query_slices(
     Returns:
         Dictionary of slice data with slice name as the key.
     """
+    # Normalize list parameters that may be passed as JSON strings
+    slice_state = normalize_list_param(slice_state)
+    exclude_slice_state = normalize_list_param(exclude_slice_state)
+
     fm, id_token = get_fabric_manager()
 
     # Single slice lookup by ID
