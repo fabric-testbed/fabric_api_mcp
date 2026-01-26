@@ -3,11 +3,12 @@ Slice lifecycle tools for FABRIC MCP Server.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
+from server.utils.data_helpers import normalize_list_param
 
 
 @tool_logger("create-slice")
@@ -15,7 +16,7 @@ async def create_slice(
 
     name: str,
     graph_model: str,
-    ssh_keys: List[str],
+    ssh_keys: Union[str, List[str]],
     lifetime: Optional[int] = None,
     lease_start_time: Optional[str] = None,
     lease_end_time: Optional[str] = None,
@@ -28,7 +29,7 @@ async def create_slice(
     Args:
         name: Name of the slice to create.
         graph_model: Slice topology graph model (GRAPHML, JSON, etc.).
-        ssh_keys: List of SSH public keys for slice access.
+        ssh_keys: List of SSH public keys for slice access. Can be passed as a list or a JSON string.
         lifetime: Optional slice lifetime in days.
         lease_start_time: Optional lease start time (UTC format).
         lease_end_time: Optional lease end time (UTC format).
@@ -36,6 +37,9 @@ async def create_slice(
     Returns:
         List of sliver dictionaries representing the created slice resources.
     """
+    # Normalize list parameters that may be passed as JSON strings
+    ssh_keys = normalize_list_param(ssh_keys) or []
+
     fm, id_token = get_fabric_manager()
     slivers = await call_threadsafe(
         fm.create_slice,
