@@ -45,8 +45,8 @@ async def query_slices(
         Dictionary of slice data with slice name as the key.
     """
     # Normalize list parameters that may be passed as JSON strings
-    slice_state = normalize_list_param(slice_state)
-    exclude_slice_state = normalize_list_param(exclude_slice_state)
+    slice_state = normalize_list_param(slice_state, "slice_state")
+    exclude_slice_state = normalize_list_param(exclude_slice_state, "exclude_slice_state")
 
     fm, id_token = get_fabric_manager()
 

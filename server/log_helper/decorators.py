@@ -7,17 +7,45 @@ import logging
 import time
 import uuid
 from functools import wraps
-from typing import Callable
+from typing import Any, Callable, Dict
 
-log = logging.getLogger("fabric.mcp")
+log = logging.getLogger("server.tools")
+
+# Parameters to redact from logs (security)
+REDACT_PARAMS = frozenset({"token", "password", "secret", "key", "credential", "auth"})
+
+# Parameters to skip in logs (too verbose or not useful)
+SKIP_PARAMS = frozenset({"toolCallId", "tool_call_id"})
+
+
+def _sanitize_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Sanitize parameters for logging: redact secrets, skip noise.
+    """
+    sanitized = {}
+    for k, v in kwargs.items():
+        if k in SKIP_PARAMS:
+            continue
+        # Redact sensitive parameters
+        if any(secret in k.lower() for secret in REDACT_PARAMS):
+            sanitized[k] = "***REDACTED***"
+        # Truncate very long strings
+        elif isinstance(v, str) and len(v) > 200:
+            sanitized[k] = f"{v[:200]}... ({len(v)} chars)"
+        else:
+            sanitized[k] = v
+    return sanitized
 
 
 def tool_logger(tool_name: str) -> Callable:
     """
-    Decorator that wraps MCP tool functions with log_helper and timing.
+    Decorator that wraps MCP tool functions with logging and timing.
 
-    Logs tool invocation start/end with request IDs for tracing, execution duration,
-    and result size. Helps track performance and debug issues.
+    Logs:
+    - Tool invocation with input parameters (DEBUG)
+    - Tool start (INFO)
+    - Tool completion with duration and result size (INFO)
+    - Tool errors with stack trace (ERROR)
 
     Args:
         tool_name: Name of the tool being wrapped (for log messages)
@@ -38,26 +66,54 @@ def tool_logger(tool_name: str) -> Callable:
                 pass
             rid = rid or kwargs.get("toolCallId") or kwargs.get("tool_call_id") or uuid.uuid4().hex[:12]
 
+            # Log tool invocation with parameters at DEBUG level
+            sanitized_params = _sanitize_params(kwargs)
+            log.debug(
+                "[%s] invoked with params: %s",
+                tool_name,
+                sanitized_params,
+                extra={"tool": tool_name, "request_id": rid, "params": sanitized_params},
+            )
+
             # Log tool start and measure execution time
             start = time.perf_counter()
-            log.info("Tool start", extra={"tool": tool_name, "request_id": rid})
+            log.info(
+                "[%s] >>> START (rid=%s)",
+                tool_name,
+                rid,
+                extra={"tool": tool_name, "request_id": rid},
+            )
             try:
                 result = await fn(*args, **kwargs)
                 dur_ms = round((time.perf_counter() - start) * 1000, 2)
+
                 # Track result size for performance analysis
                 size = None
                 if isinstance(result, list):
                     size = len(result)
                 elif isinstance(result, dict):
                     size = result.get("count") or len(result)
-                log.info("Tool done in %.2fms (size=%s)", dur_ms, size,
-                         extra={"tool": tool_name, "request_id": rid, "duration_ms": dur_ms})
+
+                log.info(
+                    "[%s] <<< DONE in %.2fms (result_size=%s, rid=%s)",
+                    tool_name,
+                    dur_ms,
+                    size,
+                    rid,
+                    extra={"tool": tool_name, "request_id": rid, "duration_ms": dur_ms, "result_size": size},
+                )
                 return result
-            except Exception:
+            except Exception as e:
                 # Log errors with timing for debugging
                 dur_ms = round((time.perf_counter() - start) * 1000, 2)
-                log.exception("Tool error after %.2fms", dur_ms,
-                              extra={"tool": tool_name, "request_id": rid, "duration_ms": dur_ms})
+                log.exception(
+                    "[%s] !!! ERROR after %.2fms: %s (rid=%s)",
+                    tool_name,
+                    dur_ms,
+                    str(e),
+                    rid,
+                    extra={"tool": tool_name, "request_id": rid, "duration_ms": dur_ms, "error": str(e)},
+                )
                 raise
         return _async_wrapper
     return _wrap
