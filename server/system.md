@@ -678,6 +678,24 @@ filters = "lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2"
 5. **Extend**: `renew-slice` to prevent expiration
 6. **Cleanup**: `delete-slice` to release resources
 
+### Build-Slice Network Auto-Detection
+
+The `build-slice` tool auto-detects network type when `type` is omitted:
+
+| User specifies | Single site | Multi site |
+|:---|:---|:---|
+| *(nothing)* | `L2Bridge` | Per-node `FABNetv4` (site-scoped L3) |
+| `L2` (generic) | `L2Bridge` | `L2STS` |
+| `L2PTP` | `L2PTP` (SmartNIC auto-added) | `L2PTP` (SmartNIC auto-added) |
+| `L2Bridge` | `L2Bridge` | **Error** (single-site only) |
+| `L2STS` | `L2STS` | `L2STS` |
+| `FABNetv4` / `FABNetv6` | L3 network | L3 network |
+| `FABNetv4Ext` / `FABNetv6Ext` | Externally reachable L3 | Externally reachable L3 |
+
+**NIC selection:** `L2PTP` requires a SmartNIC (`NIC_ConnectX_6` auto-added). All other types use `NIC_Basic`.
+
+**Bandwidth:** Only applies to `L2PTP` networks.
+
 ### Slice States Flow
 
 ```

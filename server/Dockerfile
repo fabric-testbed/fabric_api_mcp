@@ -1,4 +1,5 @@
-FROM python:3.11.0
+ARG PYTHON_VERSION=3.13-slim
+FROM python:${PYTHON_VERSION}
 
 LABEL maintainer="Komal Thareja <komal.thareja@gmail.com>"
 
@@ -21,7 +22,8 @@ WORKDIR /app
 
 # Leverage layer caching
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir uv \
+ && uv pip install --system --no-cache -r /app/requirements.txt
 
 # App code (package + resources)
 COPY . /app/server

@@ -18,14 +18,17 @@ A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC
 - `query-links` — list L2/L3 links
 - `query-slices` — search/list slices or fetch a single slice
 - `get-slivers` — list slivers for a slice
-- `create-slice` — create a slice from a serialized graph + SSH keys -- Not fully implemented
-- `modify-slice` — modify an existing slice  -- Not fully implemented
-- `accept-modify` — accept the last modify  -- Not fully implemented
 - `renew-slice` — renew slice by `lease_end_time`
 - `delete-slice` — delete a slice (by ID)
-- `resources` — advertised resources (optionally filtered)
-- `poa-create` — perform POA ops (e.g., `cpuinfo`, `reboot`, `addkey`)   -- Not fully implemented
-- `poa-get` — POA status lookup  -- Not fully implemented
+- `modify-slice` — modify an existing slice
+- `accept-modify` — accept the last modify
+- `build-slice` — build and submit a slice with nodes, components, and networks
+- `show-my-projects` — list projects for the current user (or specified UUID)
+- `list-project-users` — list users in a project
+- `get-user-keys` — fetch a user's SSH/public keys
+- `add-public-key` — add a public key to a sliver (POA addkey)
+- `remove-public-key` — remove a public key from a sliver (POA removekey)
+- `os-reboot` — reboot a sliver (POA)
 
 > All tools expect JSON params and return JSON.
 
@@ -212,11 +215,14 @@ server {
 
 ## Local run (no Docker)
 
+Requires Python 3.13+ (compatible with 3.14).
+
 ```bash
 cd server
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install uv
+uv pip install -r requirements.txt
 LOG_LEVEL=DEBUG PORT=5000 python __main__.py
 ```
 
@@ -278,7 +284,7 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 {
   "tool": "query-hosts",
   "params": {
-    "filters": { "site": {"eq": "UCSD"}, "name": {"icontains": "w"} },
+    "filters": "lambda r: r.get('site') == 'UCSD' and any('GPU' in c for c in r.get('components', {}).keys())",
     "sort": { "field": "cores_available", "direction": "desc" },
     "limit": 100
   }
@@ -289,13 +295,61 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 
 ```jsonc
 {
-  "tool": "poa-create",
+  "tool": "os-reboot",
   "params": {
-    "sliver_id": "<SLIVER-UUID>",
-    "operation": "reboot"
+    "sliver_id": "<SLIVER-UUID>"
   }
 }
 ```
+
+**Build and submit a slice**
+
+```jsonc
+{
+  "tool": "build-slice",
+  "params": {
+    "name": "demo-slice",
+    "ssh_keys": ["ssh-ed25519 AAAA... user@example"],
+    "nodes": [
+      {
+        "name": "node1",
+        "site": "UCSD",
+        "cores": 4,
+        "ram": 16,
+        "disk": 50,
+        "image": "default_rocky_8",
+        "components": [
+          { "model": "GPU_TeslaT4", "name": "gpu0" }
+        ]
+      },
+      {
+        "name": "node2",
+        "site": "RENC",
+        "cores": 8,
+        "ram": 32,
+        "disk": 100
+      }
+    ],
+    "networks": [
+      {
+        "name": "net1",
+        "type": "L2PTP",
+        "nodes": ["node1", "node2"],
+        "bandwidth": 10
+      }
+    ],
+    "lifetime": 60
+  }
+}
+```
+
+**Valid component and network types**
+
+- Component models: `GPU_TeslaT4`, `GPU_RTX6000`, `GPU_A40`, `GPU_A30`, `NIC_Basic`, `NIC_ConnectX_5`, `NIC_ConnectX_6`, `NIC_ConnectX_7_100`, `NVME_P4510`, `FPGA_Xilinx_U280`
+- L2 network types: `L2PTP` (requires SmartNIC, auto-added), `L2STS`, `L2Bridge` (single-site only)
+- L3 network types: `FABNetv4`, `FABNetv6`, `IPv4`, `IPv6`, `FABNetv4Ext`, `FABNetv6Ext`, `IPv4Ext`, `IPv6Ext`
+- Generic shorthand: `L2` (auto-selects `L2Bridge` or `L2STS` based on topology)
+- If `type` is omitted: single-site defaults to `L2Bridge`, multi-site defaults to per-node `FABNetv4`
 
 ---
 

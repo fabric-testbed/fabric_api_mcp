@@ -4,8 +4,8 @@ Quick steps for running the FABRIC MCP server in HTTP mode (typical for containe
 
 ## Prerequisites
 
-- Python 3.11+
-- Install dependencies: `pip install -r server/requirements.txt`
+- Python 3.13+ (compatible with 3.14)
+- Install dependencies: `uv pip install -r server/requirements.txt`
 - Set FABRIC API host env vars as needed (defaults are production); auth uses Bearer FABRIC ID tokens supplied by the client.
 
 ## HTTP mode (default)

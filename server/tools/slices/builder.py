@@ -31,8 +31,86 @@ VALID_COMPONENT_MODELS = VALID_GPU_MODELS + VALID_NIC_MODELS + VALID_STORAGE_MOD
 
 # Valid network types
 VALID_L2_NETWORK_TYPES = ["L2PTP", "L2STS", "L2Bridge"]
-VALID_L3_NETWORK_TYPES = ["FABNetv4", "FABNetv6", "IPv4", "IPv6"]
+VALID_L3_NETWORK_TYPES = [
+    "FABNetv4", "FABNetv6", "IPv4", "IPv6",
+    "FABNetv4Ext", "FABNetv6Ext", "IPv4Ext", "IPv6Ext",
+]
 VALID_NETWORK_TYPES = VALID_L2_NETWORK_TYPES + VALID_L3_NETWORK_TYPES
+
+# SmartNIC models required for L2PTP
+SMARTNIC_MODELS = ["NIC_ConnectX_5", "NIC_ConnectX_6", "NIC_ConnectX_7_100"]
+DEFAULT_SMARTNIC = "NIC_ConnectX_6"
+
+# Mapping from user-facing L3 type to the string expected by add_l3network
+L3_TYPE_MAP = {
+    "FABNetv4": "IPv4",
+    "FABNetv6": "IPv6",
+    "FABNetv4Ext": "IPv4Ext",
+    "FABNetv6Ext": "IPv6Ext",
+    "IPv4": "IPv4",
+    "IPv6": "IPv6",
+    "IPv4Ext": "IPv4Ext",
+    "IPv6Ext": "IPv6Ext",
+}
+
+
+def _determine_network_type(
+    requested_type: Optional[str],
+    sites: set,
+) -> str:
+    """
+    Auto-detect the final network type based on user request and topology.
+
+    Args:
+        requested_type: The type the user specified (may be None or generic "L2").
+        sites: Set of site names for the connected nodes.
+
+    Returns:
+        Resolved network type string.
+
+    Raises:
+        ValueError: If the combination is invalid.
+    """
+    single_site = len(sites) <= 1
+
+    if requested_type is None:
+        # No type specified: single-site → L2Bridge, multi-site → FABNetv4 (per-node)
+        return "L2Bridge" if single_site else "FABNetv4"
+
+    upper = requested_type.upper()
+
+    # Generic "L2" shorthand
+    if upper == "L2":
+        return "L2Bridge" if single_site else "L2STS"
+
+    # Explicit L2Bridge – single-site only
+    if requested_type == "L2Bridge":
+        if not single_site:
+            raise ValueError(
+                "L2Bridge networks can only connect nodes on the same site. "
+                f"Got sites: {sites}"
+            )
+        return "L2Bridge"
+
+    # Explicit types passed through
+    if requested_type in VALID_NETWORK_TYPES:
+        return requested_type
+
+    raise ValueError(
+        f"Unknown network type: {requested_type}. "
+        f"Valid types: {VALID_NETWORK_TYPES + ['L2']}"
+    )
+
+
+def _select_nic_for_network(net_type: str) -> str:
+    """
+    Choose the NIC model appropriate for the given network type.
+
+    L2PTP requires a SmartNIC; all other types work with NIC_Basic.
+    """
+    if net_type == "L2PTP":
+        return DEFAULT_SMARTNIC
+    return "NIC_Basic"
 
 
 def _get_fablib_manager(id_token: str) -> FablibManagerV2:
@@ -122,7 +200,7 @@ def _build_and_submit_slice(
     if networks:
         for net_spec in networks:
             net_name = net_spec["name"]
-            net_type = net_spec.get("type")
+            requested_type = net_spec.get("type")
             connected_nodes = net_spec.get("nodes", [])
             bandwidth = net_spec.get("bandwidth")
 
@@ -136,36 +214,65 @@ def _build_and_submit_slice(
                 if node_name not in node_map:
                     raise ValueError(f"Network {net_name} references unknown node: {node_name}")
 
-            logger.info(f"Adding network {net_name} connecting nodes: {connected_nodes}")
+            # Collect sites to determine single-site vs multi-site
+            net_sites = {node_map[n].get_site() for n in connected_nodes}
 
-            # Get interfaces from each node
-            # For each node, we need to add a NIC if it doesn't have one for the network
+            # Resolve the final network type
+            net_type = _determine_network_type(requested_type, net_sites)
+
+            logger.info(
+                f"Adding network {net_name} (requested={requested_type}, "
+                f"resolved={net_type}) connecting nodes: {connected_nodes}"
+            )
+
+            # Select NIC model
+            nic_model = _select_nic_for_network(net_type)
+
+            # Handle multi-site FABNetv4 auto-detection (per-node L3 connections)
+            if net_type == "FABNetv4" and requested_type is None and len(net_sites) > 1:
+                # Create a per-node FABNetv4 network so each node joins
+                # a site-scoped L3 network automatically
+                for node_name in connected_nodes:
+                    node = node_map[node_name]
+                    per_node_net_name = f"{net_name}-{node_name}"
+                    nic_name = f"{node_name}-{net_name}-nic"
+                    nic = node.add_component(model=nic_model, name=nic_name)
+                    iface = nic.get_interfaces()[0]
+                    logger.info(
+                        f"Creating per-node FABNetv4 network {per_node_net_name} "
+                        f"for node {node_name}"
+                    )
+                    slice_obj.add_l3network(
+                        name=per_node_net_name,
+                        interfaces=[iface],
+                        type="IPv4",
+                    )
+                continue
+
+            # Add NIC interfaces for each connected node
             interfaces = []
             for node_name in connected_nodes:
                 node = node_map[node_name]
-                # Add a basic NIC interface for network connectivity
                 nic_name = f"{node_name}-{net_name}-nic"
-                nic = node.add_component(model="NIC_Basic", name=nic_name)
+                nic = node.add_component(model=nic_model, name=nic_name)
                 iface = nic.get_interfaces()[0]
                 interfaces.append(iface)
 
-            # Determine if L2 or L3 network
-            if net_type in VALID_L3_NETWORK_TYPES or net_type in ["IPv4", "IPv6"]:
-                # L3 network
-                l3_type = "IPv4" if net_type in ["FABNetv4", "IPv4"] else "IPv6"
+            # Create L3 or L2 network
+            if net_type in VALID_L3_NETWORK_TYPES:
+                l3_type = L3_TYPE_MAP[net_type]
                 logger.info(f"Creating L3 network {net_name} of type {l3_type}")
                 slice_obj.add_l3network(name=net_name, interfaces=interfaces, type=l3_type)
             else:
-                # L2 network (default)
                 logger.info(f"Creating L2 network {net_name} (type={net_type})")
                 net_service = slice_obj.add_l2network(
                     name=net_name,
                     interfaces=interfaces,
-                    type=net_type,  # None = auto-detect
+                    type=net_type,
                 )
 
-                # Set bandwidth if specified (for L2PTP)
-                if bandwidth:
+                # Bandwidth only applies to L2PTP
+                if bandwidth and net_type == "L2PTP":
                     logger.info(f"Setting bandwidth to {bandwidth} Gbps for network {net_name}")
                     net_service.set_bandwidth(bw=bandwidth)
 
@@ -236,13 +343,18 @@ async def build_slice(
         networks: List of network specifications. Each network is a dict with:
             - name (str, required): Network name
             - nodes (list, required): List of node names to connect
-            - type (str, optional): Network type. Valid types:
-                "L2PTP" (point-to-point, 2 nodes, 2 sites),
+            - type (str, optional): Network type. Auto-detected if omitted:
+                * Single-site, no type → L2Bridge
+                * Multi-site, no type → per-node FABNetv4 (site-scoped L3)
+                * "L2" (generic) → L2Bridge (single-site) or L2STS (multi-site)
+              Explicit types:
+                "L2PTP" (point-to-point; requires SmartNIC, auto-added),
                 "L2STS" (site-to-site, multiple interfaces),
-                "L2Bridge" (local bridge, single site),
-                "FABNetv4", "FABNetv6" (L3 networks)
-              If not specified, auto-detected based on topology.
-            - bandwidth (int, optional): Bandwidth in Gbps (for L2PTP)
+                "L2Bridge" (local bridge, single site only),
+                "FABNetv4", "FABNetv6" (L3 networks),
+                "FABNetv4Ext", "FABNetv6Ext" (externally reachable L3),
+                "IPv4", "IPv6", "IPv4Ext", "IPv6Ext"
+            - bandwidth (int, optional): Bandwidth in Gbps (L2PTP only)
 
         lifetime: Slice lifetime in days (optional).
 
