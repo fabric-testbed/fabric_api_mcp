@@ -9,5 +9,5 @@ uv
 # Testing dependencies
 pytest
 pytest-asyncio
-httpx
+httpx<1.0.0
 pytest-cov
