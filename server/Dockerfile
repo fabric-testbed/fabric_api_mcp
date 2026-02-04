@@ -23,7 +23,7 @@ WORKDIR /app
 # Leverage layer caching
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir uv \
- && uv pip install --system --no-cache -r /app/requirements.txt
+ && uv pip install --system --no-cache --prerelease=allow -r /app/requirements.txt
 
 # App code (package + resources)
 COPY . /app/server
