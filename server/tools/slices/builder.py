@@ -1,0 +1,345 @@
+"""
+High-level slice builder tool for FABRIC MCP Server.
+
+Provides a declarative interface to build slices with nodes, components,
+and network services using FablibManager from fabrictestbed-extensions.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Dict, List, Optional, Union
+
+from fabrictestbed_extensions.fablib.fablib_v2 import FablibManagerV2
+from fastmcp.server.dependencies import get_http_headers
+
+from server.auth.token import extract_bearer_token
+from server.config import config
+from server.log_helper.decorators import tool_logger
+from server.utils.async_helpers import call_threadsafe
+from server.utils.data_helpers import normalize_list_param
+
+logger = logging.getLogger(__name__)
+
+
+# Valid component models that can be added to nodes
+VALID_GPU_MODELS = ["GPU_TeslaT4", "GPU_RTX6000", "GPU_A40", "GPU_A30"]
+VALID_NIC_MODELS = ["NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6", "NIC_ConnectX_7_100"]
+VALID_STORAGE_MODELS = ["NVME_P4510"]
+VALID_FPGA_MODELS = ["FPGA_Xilinx_U280"]
+VALID_COMPONENT_MODELS = VALID_GPU_MODELS + VALID_NIC_MODELS + VALID_STORAGE_MODELS + VALID_FPGA_MODELS
+
+# Valid network types
+VALID_L2_NETWORK_TYPES = ["L2PTP", "L2STS", "L2Bridge"]
+VALID_L3_NETWORK_TYPES = ["FABNetv4", "FABNetv6", "IPv4", "IPv6"]
+VALID_NETWORK_TYPES = VALID_L2_NETWORK_TYPES + VALID_L3_NETWORK_TYPES
+
+
+def _get_fablib_manager(id_token: str) -> FablibManagerV2:
+    """
+    Create a FablibManager instance with the given id_token.
+
+    Args:
+        id_token: The bearer token for authentication.
+
+    Returns:
+        Configured FablibManager instance.
+    """
+    return FablibManagerV2(
+        id_token=id_token,
+        credmgr_host=config.credmgr_host,
+        orchestrator_host=config.orchestrator_host,
+        core_api_host=config.core_api_host,
+        am_host=config.am_host,
+        auto_token_refresh=False,
+        validate_config=False,
+        log_level=config.log_level,
+        log_path=True
+    )
+
+
+def _build_and_submit_slice(
+    id_token: str,
+    name: str,
+    ssh_keys: List[str],
+    nodes: List[Dict[str, Any]],
+    networks: Optional[List[Dict[str, Any]]] = None,
+    lifetime: Optional[int] = None,
+    lease_start_time: Optional[str] = None,
+    lease_end_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Build a slice using FablibManager and submit it.
+
+    This function runs synchronously and should be called via call_threadsafe.
+    """
+    fablib = _get_fablib_manager(id_token)
+
+    # Create a new slice
+    logger.info(f"Creating new slice: {name}")
+    slice_obj = fablib.new_slice(name=name)
+
+    # Track created nodes for network connections
+    node_map: Dict[str, Any] = {}
+
+    # Add nodes to the slice
+    for node_spec in nodes:
+        node_name = node_spec["name"]
+        site = node_spec["site"]
+        cores = node_spec.get("cores", 2)
+        ram = node_spec.get("ram", 8)
+        disk = node_spec.get("disk", 10)
+        image = node_spec.get("image", "default_rocky_8")
+
+        logger.info(f"Adding node {node_name} at site {site} (cores={cores}, ram={ram}, disk={disk})")
+
+        node = slice_obj.add_node(
+            name=node_name,
+            site=site,
+            cores=cores,
+            ram=ram,
+            disk=disk,
+            image=image,
+        )
+        node_map[node_name] = node
+
+        # Add components to the node
+        components = node_spec.get("components", [])
+        for i, comp_spec in enumerate(components):
+            model = comp_spec.get("model")
+            comp_name = comp_spec.get("name", f"{node_name}-{model}-{i}")
+
+            if model not in VALID_COMPONENT_MODELS:
+                raise ValueError(
+                    f"Unknown component model: {model}. "
+                    f"Valid models: {VALID_COMPONENT_MODELS}"
+                )
+
+            logger.info(f"Adding component {comp_name} ({model}) to node {node_name}")
+            node.add_component(model=model, name=comp_name)
+
+    # Add networks to connect nodes
+    if networks:
+        for net_spec in networks:
+            net_name = net_spec["name"]
+            net_type = net_spec.get("type")
+            connected_nodes = net_spec.get("nodes", [])
+            bandwidth = net_spec.get("bandwidth")
+
+            if len(connected_nodes) < 2:
+                raise ValueError(
+                    f"Network {net_name} must connect at least 2 nodes, got: {connected_nodes}"
+                )
+
+            # Validate all referenced nodes exist
+            for node_name in connected_nodes:
+                if node_name not in node_map:
+                    raise ValueError(f"Network {net_name} references unknown node: {node_name}")
+
+            logger.info(f"Adding network {net_name} connecting nodes: {connected_nodes}")
+
+            # Get interfaces from each node
+            # For each node, we need to add a NIC if it doesn't have one for the network
+            interfaces = []
+            for node_name in connected_nodes:
+                node = node_map[node_name]
+                # Add a basic NIC interface for network connectivity
+                nic_name = f"{node_name}-{net_name}-nic"
+                nic = node.add_component(model="NIC_Basic", name=nic_name)
+                iface = nic.get_interfaces()[0]
+                interfaces.append(iface)
+
+            # Determine if L2 or L3 network
+            if net_type in VALID_L3_NETWORK_TYPES or net_type in ["IPv4", "IPv6"]:
+                # L3 network
+                l3_type = "IPv4" if net_type in ["FABNetv4", "IPv4"] else "IPv6"
+                logger.info(f"Creating L3 network {net_name} of type {l3_type}")
+                slice_obj.add_l3network(name=net_name, interfaces=interfaces, type=l3_type)
+            else:
+                # L2 network (default)
+                logger.info(f"Creating L2 network {net_name} (type={net_type})")
+                net_service = slice_obj.add_l2network(
+                    name=net_name,
+                    interfaces=interfaces,
+                    type=net_type,  # None = auto-detect
+                )
+
+                # Set bandwidth if specified (for L2PTP)
+                if bandwidth:
+                    logger.info(f"Setting bandwidth to {bandwidth} Gbps for network {net_name}")
+                    net_service.set_bandwidth(bw=bandwidth)
+
+    # Submit the slice (non-blocking)
+    logger.info(f"Submitting slice {name}")
+
+    # Convert lifetime to lease_in_hours if provided
+    lease_in_hours = lifetime * 24 if lifetime else None
+
+    slice_id = slice_obj.submit(
+        wait=False,  # Don't wait for slice to be ready
+        progress=False,
+        post_boot_config=False,
+        wait_ssh=False,
+        extra_ssh_keys=ssh_keys,
+        lease_in_hours=lease_in_hours,
+    )
+
+    logger.info(f"Slice {name} submitted successfully with ID: {slice_id}")
+
+    return {
+        "status": "submitted",
+        "slice_id": slice_id,
+        "slice_name": name,
+        "nodes": [n["name"] for n in nodes],
+        "networks": [n["name"] for n in networks] if networks else [],
+    }
+
+
+@tool_logger("build-slice")
+async def build_slice(
+    name: str,
+    ssh_keys: Union[str, List[str]],
+    nodes: Union[str, List[Dict[str, Any]]],
+    networks: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    lifetime: Optional[int] = None,
+    lease_start_time: Optional[str] = None,
+    lease_end_time: Optional[str] = None,
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Build and create a FABRIC slice from high-level specifications.
+
+    This tool provides a declarative way to create slices without needing to
+    construct raw GraphML. Specify nodes with their sites and components,
+    and networks to connect them.
+
+    Args:
+        name: Name of the slice to create.
+
+        ssh_keys: SSH public keys for slice access. Can be a list or JSON string.
+
+        nodes: List of node specifications. Each node is a dict with:
+            - name (str, required): Unique node name
+            - site (str, required): FABRIC site (e.g., "UTAH", "STAR", "UCSD", "WASH")
+            - cores (int, optional): CPU cores (default: 2)
+            - ram (int, optional): RAM in GB (default: 8)
+            - disk (int, optional): Disk in GB (default: 10)
+            - image (str, optional): OS image (default: "default_rocky_8")
+            - components (list, optional): List of components to add:
+                - model (str): Component model. Valid GPU models:
+                    "GPU_TeslaT4", "GPU_RTX6000", "GPU_A40", "GPU_A30"
+                  Valid NIC models:
+                    "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6"
+                - name (str, optional): Component name
+
+        networks: List of network specifications. Each network is a dict with:
+            - name (str, required): Network name
+            - nodes (list, required): List of node names to connect
+            - type (str, optional): Network type. Valid types:
+                "L2PTP" (point-to-point, 2 nodes, 2 sites),
+                "L2STS" (site-to-site, multiple interfaces),
+                "L2Bridge" (local bridge, single site),
+                "FABNetv4", "FABNetv6" (L3 networks)
+              If not specified, auto-detected based on topology.
+            - bandwidth (int, optional): Bandwidth in Gbps (for L2PTP)
+
+        lifetime: Slice lifetime in days (optional).
+
+        lease_start_time: Lease start time in UTC format (optional).
+
+        lease_end_time: Lease end time in UTC format (optional).
+
+    Returns:
+        Dict with slice creation status and details.
+
+    Example:
+        Create 2 GPU nodes (Utah and DC) connected by 100 Gbps network:
+
+        {
+            "name": "my-gpu-slice",
+            "ssh_keys": ["ssh-rsa AAAA..."],
+            "nodes": [
+                {
+                    "name": "node-utah",
+                    "site": "UTAH",
+                    "cores": 16,
+                    "ram": 64,
+                    "disk": 100,
+                    "components": [
+                        {"model": "GPU_TeslaT4", "name": "gpu1"}
+                    ]
+                },
+                {
+                    "name": "node-dc",
+                    "site": "STAR",
+                    "cores": 16,
+                    "ram": 64,
+                    "disk": 100,
+                    "components": [
+                        {"model": "GPU_TeslaT4", "name": "gpu1"}
+                    ]
+                }
+            ],
+            "networks": [
+                {
+                    "name": "gpu-net",
+                    "nodes": ["node-utah", "node-dc"],
+                    "type": "L2PTP",
+                    "bandwidth": 100
+                }
+            ]
+        }
+    """
+    # Extract bearer token from request
+    headers = get_http_headers() or {}
+    id_token = extract_bearer_token(headers)
+
+    # Normalize list parameters that may be passed as JSON strings
+    ssh_keys = normalize_list_param(ssh_keys, "ssh_keys") or []
+
+    # Parse nodes if passed as JSON string
+    if isinstance(nodes, str):
+        try:
+            nodes = json.loads(nodes)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse nodes JSON: {e}")
+
+    if not isinstance(nodes, list) or len(nodes) == 0:
+        raise ValueError("nodes must be a non-empty list of node specifications")
+
+    # Parse networks if passed as JSON string
+    if networks is not None:
+        if isinstance(networks, str):
+            try:
+                networks = json.loads(networks)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Failed to parse networks JSON: {e}")
+
+    # Validate node specifications
+    for i, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            raise ValueError(f"Node {i} must be a dictionary, got {type(node)}")
+        if "name" not in node:
+            raise ValueError(f"Node {i} missing required 'name' field")
+        if "site" not in node:
+            raise ValueError(f"Node {node.get('name', i)} missing required 'site' field")
+
+    # Build and submit the slice
+    logger.info(f"Building slice '{name}' with {len(nodes)} nodes")
+    result = await call_threadsafe(
+        _build_and_submit_slice,
+        id_token=id_token,
+        name=name,
+        ssh_keys=ssh_keys,
+        nodes=nodes,
+        networks=networks,
+        lifetime=lifetime,
+        lease_start_time=lease_start_time,
+        lease_end_time=lease_end_time,
+    )
+
+    return result
+
+
+TOOLS = [build_slice]

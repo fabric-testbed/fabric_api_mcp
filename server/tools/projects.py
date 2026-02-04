@@ -92,7 +92,7 @@ TOOLS.append(list_project_users)
 async def get_user_keys(
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
-    user_uuid: str = "",
+    user_uuid: Optional[str] = None,
     key_type: Optional[str] = "sliver",
 ) -> List[Dict[str, Any]]:
     """
@@ -105,9 +105,6 @@ async def get_user_keys(
     Returns:
         List of key records.
     """
-    if not user_uuid:
-        raise ValueError("user_uuid is required")
-
     fm, id_token = get_fabric_manager()
     items = await call_threadsafe(
         fm.get_user_keys,

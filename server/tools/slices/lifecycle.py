@@ -11,56 +11,10 @@ from server.utils.async_helpers import call_threadsafe
 from server.utils.data_helpers import normalize_list_param
 
 
-@tool_logger("create-slice")
-async def create_slice(
-
-    name: str,
-    graph_model: str,
-    ssh_keys: Union[str, List[str]],
-    lifetime: Optional[int] = None,
-    lease_start_time: Optional[str] = None,
-    lease_end_time: Optional[str] = None,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Create a new FABRIC slice.
-
-    Args:
-        name: Name of the slice to create.
-        graph_model: Slice topology graph model (GRAPHML, JSON, etc.).
-        ssh_keys: List of SSH public keys for slice access. Can be passed as a list or a JSON string.
-        lifetime: Optional slice lifetime in days.
-        lease_start_time: Optional lease start time (UTC format).
-        lease_end_time: Optional lease end time (UTC format).
-
-    Returns:
-        List of sliver dictionaries representing the created slice resources.
-    """
-    # Normalize list parameters that may be passed as JSON strings
-    ssh_keys = normalize_list_param(ssh_keys) or []
-
-    fm, id_token = get_fabric_manager()
-    slivers = await call_threadsafe(
-        fm.create_slice,
-        id_token=id_token,
-        name=name,
-        graph_model=graph_model,
-        ssh_keys=ssh_keys,
-        lifetime=lifetime,
-        lease_start_time=lease_start_time,
-        lease_end_time=lease_end_time,
-        return_fmt="dict",
-    )
-    return slivers
-
-
 @tool_logger("renew-slice")
 async def renew_slice(
-
     slice_id: str,
     lease_end_time: str,
-    
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -83,7 +37,6 @@ async def renew_slice(
 
 @tool_logger("delete-slice")
 async def delete_slice(
-
     toolCallId: Optional[str] = None,
     tool_call_id: Optional[str] = None,
     slice_id: Optional[str] = None,
@@ -103,4 +56,4 @@ async def delete_slice(
     return {"status": "ok", "slice_id": slice_id}
 
 
-TOOLS = [create_slice, renew_slice, delete_slice]
+TOOLS = [renew_slice, delete_slice]
