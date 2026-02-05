@@ -102,14 +102,25 @@ def _determine_network_type(
     )
 
 
-def _select_nic_for_network(net_type: str) -> str:
+def _select_nic_for_network(net_type: str, bandwidth: Optional[int] = None) -> str:
     """
-    Choose the NIC model appropriate for the given network type.
+    Choose the NIC model appropriate for the network type and bandwidth.
 
-    L2PTP requires a SmartNIC; all other types work with NIC_Basic.
+    NIC selection rules:
+    - L2PTP always requires a SmartNIC (bandwidth determines which one)
+    - 100 Gbps bandwidth → NIC_ConnectX_6
+    - 25 Gbps bandwidth → NIC_ConnectX_5
+    - No bandwidth or other L2/L3 types → NIC_Basic
     """
     if net_type == "L2PTP":
+        # L2PTP requires SmartNIC; pick based on bandwidth
+        if bandwidth and bandwidth >= 100:
+            return "NIC_ConnectX_6"
+        elif bandwidth and bandwidth >= 25:
+            return "NIC_ConnectX_5"
+        # Default SmartNIC for L2PTP without explicit bandwidth
         return DEFAULT_SMARTNIC
+    # All other network types use NIC_Basic
     return "NIC_Basic"
 
 
@@ -160,15 +171,38 @@ def _build_and_submit_slice(
     # Track created nodes for network connections
     node_map: Dict[str, Any] = {}
 
+    # Track used sites to spread nodes across different sites when auto-selecting
+    used_sites: List[str] = []
+
     # Add nodes to the slice
     for node_spec in nodes:
         node_name = node_spec["name"]
-        site = node_spec["site"]
+        site = node_spec.get("site")  # May be None
         cores = node_spec.get("cores", 2)
         ram = node_spec.get("ram", 8)
         disk = node_spec.get("disk", 10)
         image = node_spec.get("image", "default_rocky_8")
 
+        # Auto-select random site if not specified
+        if not site:
+            # Create filter function to ensure site has enough resources
+            def site_filter(s):
+                return (
+                    s.get("cores_available", 0) >= cores
+                    and s.get("ram_available", 0) >= ram
+                    and s.get("disk_available", 0) >= disk
+                )
+
+            try:
+                # Try to pick a site not already used (for diversity)
+                site = fablib.get_random_site(avoid=used_sites, filter_function=site_filter)
+            except Exception:
+                # If no unique site available, allow reuse
+                site = fablib.get_random_site(avoid=[], filter_function=site_filter)
+
+            logger.info(f"Auto-selected site '{site}' for node {node_name}")
+
+        used_sites.append(site)
         logger.info(f"Adding node {node_name} at site {site} (cores={cores}, ram={ram}, disk={disk})")
 
         node = slice_obj.add_node(
@@ -203,6 +237,7 @@ def _build_and_submit_slice(
             requested_type = net_spec.get("type")
             connected_nodes = net_spec.get("nodes", [])
             bandwidth = net_spec.get("bandwidth")
+            user_nic_model = net_spec.get("nic") or net_spec.get("nic_model")
 
             if len(connected_nodes) < 2:
                 raise ValueError(
@@ -225,8 +260,17 @@ def _build_and_submit_slice(
                 f"resolved={net_type}) connecting nodes: {connected_nodes}"
             )
 
-            # Select NIC model
-            nic_model = _select_nic_for_network(net_type)
+            # Select NIC model: user-specified takes precedence, otherwise auto-select
+            if user_nic_model:
+                if user_nic_model not in VALID_NIC_MODELS:
+                    raise ValueError(
+                        f"Invalid NIC model '{user_nic_model}' for network {net_name}. "
+                        f"Valid models: {VALID_NIC_MODELS}"
+                    )
+                nic_model = user_nic_model
+                logger.info(f"Using user-specified NIC model: {nic_model}")
+            else:
+                nic_model = _select_nic_for_network(net_type, bandwidth)
 
             # Handle multi-site FABNetv4 auto-detection (per-node L3 connections)
             if net_type == "FABNetv4" and requested_type is None and len(net_sites) > 1:
@@ -328,7 +372,9 @@ async def build_slice(
 
         nodes: List of node specifications. Each node is a dict with:
             - name (str, required): Unique node name
-            - site (str, required): FABRIC site (e.g., "UTAH", "STAR", "UCSD", "WASH")
+            - site (str, optional): FABRIC site (e.g., "UTAH", "STAR", "UCSD", "WASH").
+              If omitted, a random site with sufficient resources is auto-selected.
+              Sites are chosen to spread nodes across different locations when possible.
             - cores (int, optional): CPU cores (default: 2)
             - ram (int, optional): RAM in GB (default: 8)
             - disk (int, optional): Disk in GB (default: 10)
@@ -354,7 +400,14 @@ async def build_slice(
                 "FABNetv4", "FABNetv6" (L3 networks),
                 "FABNetv4Ext", "FABNetv6Ext" (externally reachable L3),
                 "IPv4", "IPv6", "IPv4Ext", "IPv6Ext"
-            - bandwidth (int, optional): Bandwidth in Gbps (L2PTP only)
+            - bandwidth (int, optional): Bandwidth in Gbps (L2PTP only).
+              Also determines NIC model selection (if nic not specified):
+                * 100 Gbps → NIC_ConnectX_6
+                * 25 Gbps → NIC_ConnectX_5
+                * No bandwidth or other types → NIC_Basic
+            - nic (str, optional): Explicit NIC model to use for this network.
+              Overrides automatic selection. Valid models:
+                "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6", "NIC_ConnectX_7_100"
 
         lifetime: Slice lifetime in days (optional).
 
@@ -434,8 +487,7 @@ async def build_slice(
             raise ValueError(f"Node {i} must be a dictionary, got {type(node)}")
         if "name" not in node:
             raise ValueError(f"Node {i} missing required 'name' field")
-        if "site" not in node:
-            raise ValueError(f"Node {node.get('name', i)} missing required 'site' field")
+        # Note: 'site' is optional - if not provided, a random site will be selected
 
     # Build and submit the slice
     logger.info(f"Building slice '{name}' with {len(nodes)} nodes")

@@ -678,6 +678,10 @@ filters = "lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2"
 5. **Extend**: `renew-slice` to prevent expiration
 6. **Cleanup**: `delete-slice` to release resources
 
+### Build-Slice Auto-Selection
+
+**Site auto-selection:** If `site` is omitted from a node specification, a random site with sufficient resources (cores, RAM, disk) is automatically selected. When multiple nodes lack sites, the builder spreads them across different locations when possible.
+
 ### Build-Slice Network Auto-Detection
 
 The `build-slice` tool auto-detects network type when `type` is omitted:
@@ -692,7 +696,13 @@ The `build-slice` tool auto-detects network type when `type` is omitted:
 | `FABNetv4` / `FABNetv6` | L3 network | L3 network |
 | `FABNetv4Ext` / `FABNetv6Ext` | Externally reachable L3 | Externally reachable L3 |
 
-**NIC selection:** `L2PTP` requires a SmartNIC (`NIC_ConnectX_6` auto-added). All other types use `NIC_Basic`.
+**NIC selection:**
+- User can explicitly specify `nic` in network spec (e.g., `"nic": "NIC_ConnectX_6"`)
+- If not specified, auto-selected based on bandwidth:
+  - 100 Gbps → `NIC_ConnectX_6`
+  - 25 Gbps → `NIC_ConnectX_5`
+  - No bandwidth or other network types → `NIC_Basic`
+- Valid NIC models: `NIC_Basic`, `NIC_ConnectX_5`, `NIC_ConnectX_6`, `NIC_ConnectX_7_100`
 
 **Bandwidth:** Only applies to `L2PTP` networks.
 
