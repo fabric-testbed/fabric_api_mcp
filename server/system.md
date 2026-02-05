@@ -44,10 +44,13 @@ Prioritize correctness, token safety, and deterministic output.
 | `query-slices` | List/get user slices with filtering |
 | `get-slivers` | List slivers (resources) in a slice |
 | `create-slice` | Create new slice with topology |
-| `modify-slice` | Modify existing slice topology |
+| `modify-slice` | Modify existing slice topology (low-level, requires GraphML) |
+| `add-to-slice` | Add nodes, components, or networks to existing slice (high-level) |
 | `accept-modify` | Accept pending slice modifications |
 | `renew-slice` | Extend slice lease time |
 | `delete-slice` | Delete slice and release resources |
+| `get-network-info` | Get network details (available IPs, public IPs, gateway, subnet) |
+| `make-ip-publicly-routable` | Enable external access for FABNetv4Ext/FABNetv6Ext IPs |
 
 ### Resource & Operation Tools
 
@@ -705,9 +708,66 @@ The `build-slice` tool auto-detects network type when `type` is omitted:
   - No bandwidth or other network types → `NIC_Basic`
 - Valid NIC models: `NIC_Basic`, `NIC_ConnectX_5`, `NIC_ConnectX_6`, `NIC_ConnectX_7_100`
 
+**SmartNIC port selection:**
+Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports:
+```json
+{
+  "name": "net1",
+  "interfaces": [
+    {"node": "node1", "nic": "smartnic1", "port": 0},
+    {"node": "node2", "nic": "smartnic1", "port": 1}
+  ],
+  "type": "L2PTP"
+}
+```
+- `nic`: NIC component name (reuses existing or creates new)
+- `port`: Interface index (0 or 1 for SmartNICs like NIC_ConnectX_5/6 which have 2 ports)
+
 **Bandwidth:** Only applies to `L2PTP` networks.
 
 **Multi-site FABNet* handling:** When nodes span multiple sites and a FABNet* type is used (`FABNetv4`, `FABNetv6`, `FABNetv4Ext`, `FABNetv6Ext`), the builder creates **one network per site**. All nodes at the same site are connected to their site-specific network (e.g., `"mynet-UTAH"`, `"mynet-STAR"`). This is required because FABNet services are site-scoped.
+
+### FABNetv4Ext/FABNetv6Ext Public IP Workflow
+
+For slices with `FABNetv4Ext` or `FABNetv6Ext` networks, external access requires explicit IP routing after provisioning:
+
+1. **Create slice** with FABNetv4Ext/FABNetv6Ext network (via `build-slice`)
+2. **Wait for slice** to reach `StableOK` state
+3. **Get network info** to see available IPs:
+   ```json
+   {"tool": "get-network-info", "params": {"slice_name": "my-slice", "network_name": "net1"}}
+   ```
+4. **Enable public routing** for desired IPs:
+   ```json
+   {"tool": "make-ip-publicly-routable", "params": {"slice_name": "my-slice", "network_name": "net1"}}
+   ```
+   If no IP is specified, the first available IP is used.
+5. **Configure node** with the assigned public IP and routes (manual step via SSH)
+
+**Note:** For IPv4, due to limited address space, a single subnet is shared across all slices at a site requesting FABNetv4Ext.
+
+### Modifying Existing Slices (add-to-slice)
+
+Use `add-to-slice` to add nodes, components, or networks to an existing slice:
+
+```json
+{
+  "tool": "add-to-slice",
+  "params": {
+    "slice_name": "my-slice",
+    "nodes": [{"name": "node3", "site": "UTAH", "cores": 8}],
+    "components": [{"node": "node1", "model": "NIC_Basic"}],
+    "networks": [{"name": "net2", "nodes": ["node1", "node3"]}]
+  }
+}
+```
+
+**Key points:**
+- The tool fetches the latest slice topology before modifications
+- New nodes can include components in their specification
+- Components can be added to existing nodes separately
+- Networks can connect any combination of existing and new nodes
+- All NIC/network type auto-selection rules from `build-slice` apply
 
 ### Slice States Flow
 
