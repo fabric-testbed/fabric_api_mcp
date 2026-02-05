@@ -64,7 +64,7 @@ Prioritize correctness, token safety, and deterministic output.
 - Return valid JSON dictionaries (no custom objects)
 - Lists � arrays or dicts keyed by stable IDs
 - Use `snake_case` for field names
-- UTC datetimes: `"YYYY-MM-DD HH:MM:SS +0000"`
+- UTC datetime: `"YYYY-MM-DD HH:MM:SS +0000"`
 - **Active Slice States**: Any state **EXCEPT** `Closing` or `Dead`
 - **All Slice States**: `Nascent`, `Configuring`, `StableOK`, `StableError`, `ModifyOK`, `ModifyError`, `Closing`, `Dead`
 
@@ -710,11 +710,11 @@ The `build-slice` tool auto-detects network type when `type` is omitted:
 ### Slice States Flow
 
 ```
-Nascent � Configuring � StableOK
-                     � StableError (provisioning failed)
-StableOK � ModifyOK (after successful modify)
-        � ModifyError (modify failed)
-Any � Closing � Dead (deletion in progress)
+Nascent -> Configuring -> StableOK
+                       -> StableError (provisioning failed)
+StableOK -> ModifyOK (after successful modify)
+         -> ModifyError (modify failed)
+Any -> Closing -> Dead (deletion in progress)
 ```
 
 ---
