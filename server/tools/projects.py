@@ -117,6 +117,109 @@ async def get_user_keys(
 
 TOOLS.append(get_user_keys)
 
+@tool_logger("get-bastion-username")
+async def get_bastion_username(
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+    user_uuid: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch bastion username for a specific user (person_uuid).
+
+    Args:
+        user_uuid: User UUID (person_uuid) required.
+
+    Returns:
+        List of key records.
+    """
+    fm, id_token = get_fabric_manager()
+    user_info = await call_threadsafe(
+        fm.get_user_info,
+        id_token=id_token,
+        user_uuid=user_uuid,
+    )
+    return user_info.get("bastion_login")
+
+
+TOOLS.append(get_bastion_username)
+
+@tool_logger("get-user-info")
+async def get_user_info(
+    toolCallId: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+    self_info: bool = True,
+    user_uuid: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Fetch detailed user information from the FABRIC Core API.
+
+    Args:
+        self_info: If True (default), fetch info for the authenticated user (token owner).
+            Set to False and provide user_uuid to fetch info for another user.
+        user_uuid: User UUID (person_uuid) to fetch info for another user.
+            Only used when self_info=False.
+
+    Returns:
+        Dict containing user details including:
+        - uuid: User's unique identifier
+        - name: Display name
+        - email: Primary email address
+        - affiliation: Organization/institution
+        - bastion_login: Username for bastion host SSH access
+        - fabric_id: FABRIC identifier (e.g., "FABRIC1000015")
+        - eppn: eduPersonPrincipalName
+        - registered_on: Registration timestamp
+        - roles: List of project roles (project-owner, project-member, etc.)
+        - sshkeys: List of registered SSH keys with fingerprints and expiry
+        - profile: Bio, job title, pronouns, website, etc.
+        - preferences: Privacy settings for profile visibility
+
+    Example - fetch your own info (self_info=True, default):
+        get-user-info()
+        # or explicitly: get-user-info(self_info=True)
+
+    Example - fetch another user's info:
+        get-user-info(self_info=False, user_uuid="43b7271b-90eb-45f6-833a-e51cf13bbc68")
+
+    Example response:
+        {
+          "results": [{
+            "uuid": "43b7271b-90eb-45f6-833a-e51cf13bbc68",
+            "name": "Komal Thareja",
+            "email": "kthare10@email.unc.edu",
+            "affiliation": "University of North Carolina at Chapel Hill",
+            "bastion_login": "kthare10_0011904101",
+            "fabric_id": "FABRIC1000015",
+            "roles": [
+              {"name": "990d8a8b-...-pm", "description": "FABRIC Staff"},
+              ...
+            ],
+            "sshkeys": [
+              {"fingerprint": "MD5:f5:fd:...", "ssh_key_type": "ecdsa-sha2-nistp256", ...}
+            ],
+            "profile": {"bio": "...", "job": "Sr Distributed Systems Software Engineer", ...}
+          }],
+          "size": 1,
+          "status": 200
+        }
+    """
+    fm, id_token = get_fabric_manager()
+
+    # Determine which user to fetch
+    target_uuid = None if self_info else user_uuid
+    if not self_info and not user_uuid:
+        raise ValueError("user_uuid is required when self_info=False")
+
+    user_info = await call_threadsafe(
+        fm.get_user_info,
+        id_token=id_token,
+        user_uuid=target_uuid,
+    )
+    return user_info
+
+
+TOOLS.append(get_user_info)
+
 @tool_logger("add-public-key")
 async def add_public_key(
     toolCallId: Optional[str] = None,

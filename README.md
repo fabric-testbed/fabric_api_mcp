@@ -26,6 +26,7 @@ A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC
 - `show-my-projects` — list projects for the current user (or specified UUID)
 - `list-project-users` — list users in a project
 - `get-user-keys` — fetch a user's SSH/public keys
+- `get-user-info` — fetch user info (self_info=True for token owner, or self_info=False + user_uuid for others)
 - `add-public-key` — add a public key to a sliver (POA addkey)
 - `remove-public-key` — remove a public key from a sliver (POA removekey)
 - `os-reboot` — reboot a sliver (POA)
