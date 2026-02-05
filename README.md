@@ -20,7 +20,10 @@ A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC
 - `get-slivers` — list slivers for a slice
 - `renew-slice` — renew slice by `lease_end_time`
 - `delete-slice` — delete a slice (by ID)
-- `modify-slice` — modify an existing slice
+- `make-ip-publicly-routable` — enable external access for FABNetv4Ext/FABNetv6Ext network IPs
+- `get-network-info` — get network details including available/public IPs, gateway, subnet
+- `modify-slice` — modify an existing slice (low-level, requires GraphML)
+- `add-to-slice` — add nodes, components, or networks to an existing slice (high-level)
 - `accept-modify` — accept the last modify
 - `build-slice` — build and submit a slice with nodes, components, and networks
 - `show-my-projects` — list projects for the current user (or specified UUID)

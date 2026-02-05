@@ -102,6 +102,64 @@ def _determine_network_type(
     )
 
 
+def _get_or_create_interface(
+    node: Any,
+    node_nics: Dict[str, Dict[str, Any]],
+    iface_spec: Dict[str, Any],
+    net_name: str,
+    default_nic_model: str,
+) -> Any:
+    """
+    Get or create a NIC interface based on the interface specification.
+
+    Args:
+        node: The node object
+        node_nics: Dict tracking NICs per node {node_name: {nic_name: component}}
+        iface_spec: Interface specification with optional nic, port, nic_model
+        net_name: Network name (used for auto-generated NIC names)
+        default_nic_model: Default NIC model if not specified
+
+    Returns:
+        The interface object to connect to the network
+    """
+    node_name = node.get_name()
+    nic_name = iface_spec.get("nic") or iface_spec.get("nic_name")
+    port = iface_spec.get("port", 0)  # Default to port 0
+    nic_model = iface_spec.get("nic_model") or iface_spec.get("model") or default_nic_model
+
+    if nic_name:
+        # Check if this NIC was already added in this session
+        if nic_name in node_nics.get(node_name, {}):
+            nic = node_nics[node_name][nic_name]
+            logger.info(f"Reusing existing NIC {nic_name} port {port} on node {node_name}")
+        else:
+            # Try to get existing NIC from node
+            try:
+                nic = node.get_component(name=nic_name)
+                logger.info(f"Found existing NIC {nic_name} on node {node_name}")
+            except Exception:
+                # NIC doesn't exist, create it
+                logger.info(f"Creating new NIC {nic_name} ({nic_model}) on node {node_name}")
+                nic = node.add_component(model=nic_model, name=nic_name)
+                node_nics[node_name][nic_name] = nic
+    else:
+        # Auto-generate NIC name
+        nic_name = f"{node_name}-{net_name}-nic"
+        logger.info(f"Creating auto-named NIC {nic_name} ({nic_model}) on node {node_name}")
+        nic = node.add_component(model=nic_model, name=nic_name)
+        node_nics[node_name][nic_name] = nic
+
+    # Get the specified interface/port
+    interfaces = nic.get_interfaces()
+    if port >= len(interfaces):
+        raise ValueError(
+            f"Port {port} not available on NIC {nic_name} (has {len(interfaces)} ports). "
+            f"SmartNICs like NIC_ConnectX_5/6 have 2 ports (0 and 1)."
+        )
+
+    return interfaces[port]
+
+
 def _select_nic_for_network(net_type: str, bandwidth: Optional[int] = None) -> str:
     """
     Choose the NIC model appropriate for the network type and bandwidth.
@@ -230,18 +288,33 @@ def _build_and_submit_slice(
             logger.info(f"Adding component {comp_name} ({model}) to node {node_name}")
             node.add_component(model=model, name=comp_name)
 
+    # Track NICs added to nodes for reuse (node_name -> {nic_name -> component})
+    node_nics: Dict[str, Dict[str, Any]] = {name: {} for name in node_map}
+
     # Add networks to connect nodes
     if networks:
         for net_spec in networks:
             net_name = net_spec["name"]
             requested_type = net_spec.get("type")
-            connected_nodes = net_spec.get("nodes", [])
             bandwidth = net_spec.get("bandwidth")
             user_nic_model = net_spec.get("nic") or net_spec.get("nic_model")
 
-            if len(connected_nodes) < 2:
+            # Support two formats:
+            # 1. Simple: "nodes": ["node1", "node2"] - auto-create NICs
+            # 2. Detailed: "interfaces": [{"node": "node1", "nic": "nic1", "port": 0}, ...]
+            connected_nodes = net_spec.get("nodes", [])
+            interface_specs = net_spec.get("interfaces", [])
+
+            # Convert simple node list to interface specs if needed
+            if connected_nodes and not interface_specs:
+                interface_specs = [{"node": n} for n in connected_nodes]
+            elif interface_specs:
+                # Extract node names from interface specs
+                connected_nodes = [ispec.get("node") for ispec in interface_specs]
+
+            if len(interface_specs) < 2:
                 raise ValueError(
-                    f"Network {net_name} must connect at least 2 nodes, got: {connected_nodes}"
+                    f"Network {net_name} must connect at least 2 nodes/interfaces"
                 )
 
             # Validate all referenced nodes exist
@@ -276,32 +349,38 @@ def _build_and_submit_slice(
             fabnet_types = ["FABNetv4", "FABNetv6", "FABNetv4Ext", "FABNetv6Ext"]
             is_fabnet = net_type in fabnet_types
 
+            # Build a map of interface specs by node name for quick lookup
+            iface_spec_by_node = {ispec.get("node"): ispec for ispec in interface_specs}
+
             # Handle multi-site FABNet* networks: create per-site networks
             if is_fabnet and len(net_sites) > 1:
-                # Group nodes by site
-                nodes_by_site: Dict[str, List[str]] = {}
-                for node_name in connected_nodes:
+                # Group interface specs by site
+                specs_by_site: Dict[str, List[Dict[str, Any]]] = {}
+                for ispec in interface_specs:
+                    node_name = ispec.get("node")
                     node_site = node_map[node_name].get_site()
-                    if node_site not in nodes_by_site:
-                        nodes_by_site[node_site] = []
-                    nodes_by_site[node_site].append(node_name)
+                    if node_site not in specs_by_site:
+                        specs_by_site[node_site] = []
+                    specs_by_site[node_site].append(ispec)
 
                 # Create a per-site FABNet network connecting all nodes at that site
                 l3_type = L3_TYPE_MAP[net_type]
-                for site, site_nodes in nodes_by_site.items():
+                for site, site_specs in specs_by_site.items():
                     site_net_name = f"{net_name}-{site}"
                     site_interfaces = []
 
-                    for node_name in site_nodes:
+                    for ispec in site_specs:
+                        node_name = ispec.get("node")
                         node = node_map[node_name]
-                        nic_name = f"{node_name}-{net_name}-nic"
-                        nic = node.add_component(model=nic_model, name=nic_name)
-                        iface = nic.get_interfaces()[0]
+                        iface = _get_or_create_interface(
+                            node, node_nics, ispec, net_name, nic_model
+                        )
                         site_interfaces.append(iface)
 
+                    site_node_names = [s.get("node") for s in site_specs]
                     logger.info(
                         f"Creating per-site {net_type} network {site_net_name} "
-                        f"at site {site} connecting nodes: {site_nodes}"
+                        f"at site {site} connecting nodes: {site_node_names}"
                     )
                     slice_obj.add_l3network(
                         name=site_net_name,
@@ -310,13 +389,14 @@ def _build_and_submit_slice(
                     )
                 continue
 
-            # Add NIC interfaces for each connected node
+            # Add NIC interfaces for each interface spec
             interfaces = []
-            for node_name in connected_nodes:
+            for ispec in interface_specs:
+                node_name = ispec.get("node")
                 node = node_map[node_name]
-                nic_name = f"{node_name}-{net_name}-nic"
-                nic = node.add_component(model=nic_model, name=nic_name)
-                iface = nic.get_interfaces()[0]
+                iface = _get_or_create_interface(
+                    node, node_nics, ispec, net_name, nic_model
+                )
                 interfaces.append(iface)
 
             # Create L3 or L2 network
@@ -405,7 +485,14 @@ async def build_slice(
 
         networks: List of network specifications. Each network is a dict with:
             - name (str, required): Network name
-            - nodes (list, required): List of node names to connect
+            - nodes (list): Simple form - list of node names to connect (auto-creates NICs)
+            - interfaces (list): Detailed form - list of interface specs for SmartNIC control:
+                - node (str, required): Node name
+                - nic (str, optional): NIC component name (reuse existing or create named)
+                - port (int, optional): Interface/port index (0 or 1 for SmartNICs, default: 0)
+                - nic_model (str, optional): NIC model for this interface
+              Use "interfaces" to connect multiple networks to different ports of the same
+              SmartNIC. Example: one SmartNIC with port 0 → net1, port 1 → net2.
             - type (str, optional): Network type. Auto-detected if omitted:
                 * Single-site, no type → L2Bridge
                 * Multi-site, no type → per-site FABNetv4 (see below)
