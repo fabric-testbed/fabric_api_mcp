@@ -353,6 +353,7 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 - If `type` is omitted: single-site defaults to `L2Bridge`, multi-site defaults to per-node `FABNetv4`
 - NIC selection: specify `nic` in network spec to override, otherwise auto-selected based on bandwidth (100 Gbps → `NIC_ConnectX_6`, 25 Gbps → `NIC_ConnectX_5`, otherwise → `NIC_Basic`)
 - Site auto-selection: if `site` is omitted from a node, a random site with sufficient resources is chosen automatically
+- Multi-site FABNet*: when nodes span multiple sites with FABNet* types, creates per-site networks (e.g., `mynet-UTAH`, `mynet-STAR`) connecting all nodes at each site
 
 ---
 
