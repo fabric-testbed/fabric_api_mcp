@@ -32,6 +32,7 @@ Prioritize correctness, token safety, and deterministic output.
 | `show-my-projects` | List Core API project info for the user | name, uuid, memberships, tags |
 | `list-project-users` | List users in a project | user_uuid, email, name, role |
 | `get-user-keys` | Fetch SSH/public keys for a user | keytype, fingerprint, public_key, comment |
+| `get-user-info` | Fetch user info (self_info=True for token owner, or self_info=False + user_uuid for others) | uuid, name, email, affiliation, bastion_login, roles, sshkeys, profile |
 | `add-public-key` | Add a public key to a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
 | `remove-public-key` | Remove a public key from a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
 | `os-reboot` | Reboot a NodeSliver via POA | sliver_id (NodeSliver) |
