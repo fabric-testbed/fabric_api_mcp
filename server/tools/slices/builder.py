@@ -272,24 +272,41 @@ def _build_and_submit_slice(
             else:
                 nic_model = _select_nic_for_network(net_type, bandwidth)
 
-            # Handle multi-site FABNetv4 auto-detection (per-node L3 connections)
-            if net_type == "FABNetv4" and requested_type is None and len(net_sites) > 1:
-                # Create a per-node FABNetv4 network so each node joins
-                # a site-scoped L3 network automatically
+            # Check if this is a FABNet* type (L3 network that needs per-site handling)
+            fabnet_types = ["FABNetv4", "FABNetv6", "FABNetv4Ext", "FABNetv6Ext"]
+            is_fabnet = net_type in fabnet_types
+
+            # Handle multi-site FABNet* networks: create per-site networks
+            if is_fabnet and len(net_sites) > 1:
+                # Group nodes by site
+                nodes_by_site: Dict[str, List[str]] = {}
                 for node_name in connected_nodes:
-                    node = node_map[node_name]
-                    per_node_net_name = f"{net_name}-{node_name}"
-                    nic_name = f"{node_name}-{net_name}-nic"
-                    nic = node.add_component(model=nic_model, name=nic_name)
-                    iface = nic.get_interfaces()[0]
+                    node_site = node_map[node_name].get_site()
+                    if node_site not in nodes_by_site:
+                        nodes_by_site[node_site] = []
+                    nodes_by_site[node_site].append(node_name)
+
+                # Create a per-site FABNet network connecting all nodes at that site
+                l3_type = L3_TYPE_MAP[net_type]
+                for site, site_nodes in nodes_by_site.items():
+                    site_net_name = f"{net_name}-{site}"
+                    site_interfaces = []
+
+                    for node_name in site_nodes:
+                        node = node_map[node_name]
+                        nic_name = f"{node_name}-{net_name}-nic"
+                        nic = node.add_component(model=nic_model, name=nic_name)
+                        iface = nic.get_interfaces()[0]
+                        site_interfaces.append(iface)
+
                     logger.info(
-                        f"Creating per-node FABNetv4 network {per_node_net_name} "
-                        f"for node {node_name}"
+                        f"Creating per-site {net_type} network {site_net_name} "
+                        f"at site {site} connecting nodes: {site_nodes}"
                     )
                     slice_obj.add_l3network(
-                        name=per_node_net_name,
-                        interfaces=[iface],
-                        type="IPv4",
+                        name=site_net_name,
+                        interfaces=site_interfaces,
+                        type=l3_type,
                     )
                 continue
 
@@ -391,7 +408,7 @@ async def build_slice(
             - nodes (list, required): List of node names to connect
             - type (str, optional): Network type. Auto-detected if omitted:
                 * Single-site, no type → L2Bridge
-                * Multi-site, no type → per-node FABNetv4 (site-scoped L3)
+                * Multi-site, no type → per-site FABNetv4 (see below)
                 * "L2" (generic) → L2Bridge (single-site) or L2STS (multi-site)
               Explicit types:
                 "L2PTP" (point-to-point; requires SmartNIC, auto-added),
@@ -400,6 +417,13 @@ async def build_slice(
                 "FABNetv4", "FABNetv6" (L3 networks),
                 "FABNetv4Ext", "FABNetv6Ext" (externally reachable L3),
                 "IPv4", "IPv6", "IPv4Ext", "IPv6Ext"
+
+              **Multi-site FABNet* handling:** When nodes span multiple sites and
+              a FABNet* type is used (FABNetv4, FABNetv6, FABNetv4Ext, FABNetv6Ext),
+              the builder creates one network PER SITE, connecting all nodes at
+              that site to their site-specific network. Network names are suffixed
+              with the site name (e.g., "mynet-UTAH", "mynet-STAR"). This is required
+              because FABNet services are site-scoped.
             - bandwidth (int, optional): Bandwidth in Gbps (L2PTP only).
               Also determines NIC model selection (if nic not specified):
                 * 100 Gbps → NIC_ConnectX_6

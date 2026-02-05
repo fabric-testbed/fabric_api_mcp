@@ -707,6 +707,8 @@ The `build-slice` tool auto-detects network type when `type` is omitted:
 
 **Bandwidth:** Only applies to `L2PTP` networks.
 
+**Multi-site FABNet* handling:** When nodes span multiple sites and a FABNet* type is used (`FABNetv4`, `FABNetv6`, `FABNetv4Ext`, `FABNetv6Ext`), the builder creates **one network per site**. All nodes at the same site are connected to their site-specific network (e.g., `"mynet-UTAH"`, `"mynet-STAR"`). This is required because FABNet services are site-scoped.
+
 ### Slice States Flow
 
 ```
