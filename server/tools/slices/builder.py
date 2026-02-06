@@ -566,6 +566,38 @@ async def build_slice(
                 }
             ]
         }
+
+    SSH Access to VMs:
+        After the slice reaches StableOK state, access VMs via SSH through the
+        FABRIC bastion host.
+
+        Prerequisites:
+        1. Bastion keys - Create at https://portal.fabric-testbed.net/experiments#sshKeys
+        2. Slice SSH keys - The ssh_keys provided to this tool (stored on VMs)
+        3. Bastion login - Get via get-user-info tool (returns bastion_login field)
+
+        SSH Config (~/.ssh/config):
+            UserKnownHostsFile /dev/null
+            StrictHostKeyChecking no
+            ServerAliveInterval 120
+
+            Host bastion.fabric-testbed.net
+                User <bastion_login>
+                ForwardAgent yes
+                Hostname %h
+                IdentityFile ~/.ssh/bastion_key
+                IdentitiesOnly yes
+
+            Host * !bastion.fabric-testbed.net
+                ProxyJump <bastion_login>@bastion.fabric-testbed.net:22
+
+        SSH Command:
+            ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_management_ip>
+
+        Notes:
+        - VM management IP (IPv6) is available from get-slivers output
+        - Default username is 'ubuntu' for Rocky/Ubuntu images
+        - Replace <bastion_login> with your bastion username (e.g., kthare10_0011904101)
     """
     # Extract bearer token from request
     headers = get_http_headers() or {}

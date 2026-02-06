@@ -489,6 +489,14 @@ async def modify_slice_resources(
         - Remove networks before removing nodes that are connected to them
         - The slice is submitted with wait=False (non-blocking)
         - Use query-slices to check slice state after modification
+
+    SSH Access to VMs:
+        After slice reaches StableOK/ModifyOK, access VMs via the FABRIC bastion host.
+        1. Create bastion keys at https://portal.fabric-testbed.net/experiments#sshKeys
+        2. Get bastion_login from get-user-info tool
+        3. Configure SSH (~/.ssh/config) with bastion ProxyJump
+        4. SSH command: ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_ip>
+        See build-slice docstring for full SSH config example.
     """
     headers = get_http_headers() or {}
     id_token = extract_bearer_token(headers)
