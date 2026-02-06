@@ -726,9 +726,39 @@ Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports
 
 **Multi-site FABNet* handling:** When nodes span multiple sites and a FABNet* type is used (`FABNetv4`, `FABNetv6`, `FABNetv4Ext`, `FABNetv6Ext`), the builder creates **one network per site**. All nodes at the same site are connected to their site-specific network (e.g., `"mynet-UTAH"`, `"mynet-STAR"`). This is required because FABNet services are site-scoped.
 
-### FABNetv4Ext/FABNetv6Ext Public IP Workflow
+### IP Assignment by Network Type
 
-For slices with `FABNetv4Ext` or `FABNetv6Ext` networks, external access requires explicit IP routing after provisioning:
+| Network Type | Subnet Control | IP Assignment |
+|:-------------|:---------------|:--------------|
+| **L2** (L2PTP, L2STS, L2Bridge) | User chooses any subnet | User assigns IPs manually to VM interfaces |
+| **L3** (FABNetv4, FABNetv6) | Orchestrator assigns subnet | User assigns IPs from orchestrator's subnet |
+| **L3 Ext** (FABNetv4Ext, FABNetv6Ext) | Orchestrator assigns subnet | User requests public IPs via `make-ip-publicly-routable` |
+
+**L2 Networks:**
+- Full control over IP addressing
+- Choose any private subnet (e.g., `192.168.1.0/24`)
+- Configure IPs manually inside VMs via SSH
+
+**L3 Networks (FABNetv4/FABNetv6):**
+- Orchestrator assigns the subnet automatically
+- Use `get-network-info` to see the assigned subnet and gateway
+- Assign IPs from that subnet to your VM interfaces
+
+**L3 Ext Networks (FABNetv4Ext/FABNetv6Ext):**
+- Orchestrator assigns the subnet
+- Must call `make-ip-publicly-routable` to enable external access
+- Configure the **returned** public IP inside your VM
+
+### FABNetv4Ext vs FABNetv6Ext
+
+| | FABNetv4Ext | FABNetv6Ext |
+|:--|:------------|:------------|
+| **Subnet** | SHARED across all slices at site | DEDICATED to your slice |
+| **Address space** | Limited (IPv4 scarcity) | Abundant (full /64 or larger) |
+| **Requested IP** | May return different available IP | Always grants requested IP |
+| **Action** | Use the **returned** `public_ips` value | Any IP from subnet works |
+
+### FABNetv4Ext/FABNetv6Ext Public IP Workflow
 
 1. **Create slice** with FABNetv4Ext/FABNetv6Ext network (via `build-slice`)
 2. **Wait for slice** to reach `StableOK` state
@@ -741,9 +771,9 @@ For slices with `FABNetv4Ext` or `FABNetv6Ext` networks, external access require
    {"tool": "make-ip-publicly-routable", "params": {"slice_name": "my-slice", "network_name": "net1"}}
    ```
    If no IP is specified, the first available IP is used.
-5. **Configure node** with the assigned public IP and routes (manual step via SSH)
+5. **Configure node** with the **returned** `public_ips` value (via SSH)
 
-**Note:** For IPv4, due to limited address space, a single subnet is shared across all slices at a site requesting FABNetv4Ext.
+**Important for FABNetv4Ext:** The requested IP may already be in use by another slice. The orchestrator returns the actual assigned IP in `public_ips`. Always configure the **returned** IP inside your VM, not the requested one.
 
 ### Modifying Existing Slices (modify-slice-resources)
 

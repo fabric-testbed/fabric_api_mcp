@@ -205,6 +205,59 @@ def _get_fablib_manager(id_token: str) -> FablibManagerV2:
     )
 
 
+def _get_available_sites(fablib: FablibManagerV2, update: bool = True) -> List[Dict[str, Any]]:
+    """
+    Get list of available sites with their resource capacities.
+
+    Uses update=False after first call for efficiency when placing multiple nodes.
+    """
+    site_list = fablib.list_sites(
+        output="list",
+        quiet=True,
+        filter_function=lambda s: s.get("state") == "Active" and s.get("hosts", 0) > 0,
+        update=update,
+    )
+    return site_list
+
+
+def _select_site_for_node(
+    available_sites: List[Dict[str, Any]],
+    cores: int,
+    ram: int,
+    disk: int,
+    used_sites: List[str],
+) -> str:
+    """
+    Select a site for a node based on resource requirements.
+
+    Prioritizes sites not already used for diversity.
+    """
+    import random
+
+    # Filter sites with sufficient resources
+    suitable_sites = [
+        s for s in available_sites
+        if s.get("cores_available", 0) >= cores
+        and s.get("ram_available", 0) >= ram
+        and s.get("disk_available", 0) >= disk
+    ]
+
+    if not suitable_sites:
+        raise ValueError(
+            f"No sites available with sufficient resources: cores>={cores}, ram>={ram}GB, disk>={disk}GB"
+        )
+
+    # Prefer sites not already used
+    unused_sites = [s for s in suitable_sites if s.get("name") not in used_sites]
+
+    if unused_sites:
+        selected = random.choice(unused_sites)
+    else:
+        selected = random.choice(suitable_sites)
+
+    return selected.get("name")
+
+
 def _build_and_submit_slice(
     id_token: str,
     name: str,
@@ -232,6 +285,14 @@ def _build_and_submit_slice(
     # Track used sites to spread nodes across different sites when auto-selecting
     used_sites: List[str] = []
 
+    # Pre-fetch available sites once if any node needs auto-selection
+    # This avoids multiple API calls for get_random_site()
+    needs_auto_site = any(not node_spec.get("site") for node_spec in nodes)
+    available_sites: List[Dict[str, Any]] = []
+    if needs_auto_site:
+        logger.info("Pre-fetching available sites for auto-selection")
+        available_sites = _get_available_sites(fablib, update=True)
+
     # Add nodes to the slice
     for node_spec in nodes:
         node_name = node_spec["name"]
@@ -243,21 +304,7 @@ def _build_and_submit_slice(
 
         # Auto-select random site if not specified
         if not site:
-            # Create filter function to ensure site has enough resources
-            def site_filter(s):
-                return (
-                    s.get("cores_available", 0) >= cores
-                    and s.get("ram_available", 0) >= ram
-                    and s.get("disk_available", 0) >= disk
-                )
-
-            try:
-                # Try to pick a site not already used (for diversity)
-                site = fablib.get_random_site(avoid=used_sites, filter_function=site_filter)
-            except Exception:
-                # If no unique site available, allow reuse
-                site = fablib.get_random_site(avoid=[], filter_function=site_filter)
-
+            site = _select_site_for_node(available_sites, cores, ram, disk, used_sites)
             logger.info(f"Auto-selected site '{site}' for node {node_name}")
 
         used_sites.append(site)
@@ -598,6 +645,30 @@ async def build_slice(
         - VM management IP (IPv6) is available from get-slivers output
         - Default username is 'ubuntu' for Rocky/Ubuntu images
         - Replace <bastion_login> with your bastion username (e.g., kthare10_0011904101)
+
+    IP Assignment by Network Type:
+        After slice reaches StableOK, configure network interfaces inside VMs:
+
+        L2 Networks (L2PTP, L2STS, L2Bridge):
+            - User chooses any subnet (e.g., 192.168.1.0/24)
+            - Assign IPs manually to VM interfaces via SSH
+
+        L3 Networks (FABNetv4, FABNetv6):
+            - Orchestrator assigns the subnet automatically
+            - Use get-network-info to see assigned subnet and gateway
+            - Assign IPs from that subnet to VM interfaces
+
+        L3 Ext Networks (FABNetv4Ext, FABNetv6Ext):
+            - Orchestrator assigns the subnet
+            - Call make-ip-publicly-routable to enable external access
+            - Configure the RETURNED public_ips value inside your VM
+
+        FABNetv4Ext vs FABNetv6Ext:
+            - FABNetv4Ext: IPv4 subnet is SHARED across all slices at site.
+              Requested IP may be in use; orchestrator returns actual available IP.
+              Always use the RETURNED public_ips value.
+            - FABNetv6Ext: Entire IPv6 subnet is DEDICATED to your slice.
+              Any IP from the subnet can be requested and used.
     """
     # Extract bearer token from request
     headers = get_http_headers() or {}
