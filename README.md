@@ -357,6 +357,17 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 - Site auto-selection: if `site` is omitted from a node, a random site with sufficient resources is chosen automatically
 - Multi-site FABNet*: when nodes span multiple sites with FABNet* types, creates per-site networks (e.g., `mynet-UTAH`, `mynet-STAR`) connecting all nodes at each site
 
+**IP Assignment by Network Type**
+
+| Network Type | Subnet | IP Assignment |
+|--------------|--------|---------------|
+| L2 (L2PTP, L2STS, L2Bridge) | User chooses any subnet | Manual assignment inside VMs |
+| L3 (FABNetv4, FABNetv6) | Orchestrator assigns | Assign from orchestrator's subnet |
+| L3 Ext (FABNetv4Ext, FABNetv6Ext) | Orchestrator assigns | Use `make-ip-publicly-routable`, configure **returned** IP |
+
+- **FABNetv4Ext**: IPv4 subnet is **shared** across all slices at the site. Requested IP may be in use; orchestrator returns actual available IP. Always use the **returned** `public_ips` value.
+- **FABNetv6Ext**: Entire IPv6 subnet is **dedicated** to your slice. Any IP from the subnet can be requested.
+
 **SSH Access to VMs**
 
 To access FABRIC VMs, you need:

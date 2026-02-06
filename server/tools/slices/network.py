@@ -218,10 +218,17 @@ async def make_ip_publicly_routable(
 
     Note:
         - Only works with FABNetv4Ext and FABNetv6Ext network types
-        - For IPv4, due to limited address space, a single subnet is used
-          across a site for all slices requesting FABNetv4Ext
-        - If the first requested IP is already in use, the next available
-          IP is assigned and returned
+
+    IPv4Ext vs IPv6Ext behavior:
+        - **FABNetv4Ext**: The IPv4 subnet is SHARED across all slices at a site.
+          Due to limited IPv4 address space, requested IPs may already be in use.
+          If the requested IP is unavailable, the orchestrator returns the next
+          available IP. The returned public_ips in the response is the actual IP
+          assigned - configure THIS IP inside your VM.
+
+        - **FABNetv6Ext**: The entire IPv6 subnet is allocated to YOUR slice.
+          Any IP from the subnet can be requested and made public. You have
+          full control over the entire subnet.
     """
     # Extract bearer token from request
     headers = get_http_headers() or {}
@@ -261,7 +268,7 @@ async def get_network_info(
     Get detailed information about a network in a slice.
 
     Useful for checking available IPs before making them publicly routable,
-    or for getting the gateway and subnet information for manual configuration.
+    or for getting the gateway and subnet information for manual IP configuration.
 
     Args:
         network_name: Name of the network.
@@ -282,6 +289,18 @@ async def get_network_info(
 
     Example:
         get-network-info(slice_name="my-slice", network_name="net1")
+
+    IP Assignment by Network Type:
+        - **L2 networks** (L2PTP, L2STS, L2Bridge): User chooses any subnet and
+          assigns IPs manually to VM interfaces. Full control over addressing.
+
+        - **L3 networks** (FABNetv4, FABNetv6): Orchestrator assigns the subnet.
+          Use get-network-info to see the subnet, then assign IPs from that
+          subnet to your VM interfaces.
+
+        - **L3 Ext networks** (FABNetv4Ext, FABNetv6Ext): Orchestrator assigns
+          the subnet. Use make-ip-publicly-routable to request public IPs,
+          then configure the returned public_ips inside your VM.
     """
     # Extract bearer token from request
     headers = get_http_headers() or {}
