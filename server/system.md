@@ -44,8 +44,7 @@ Prioritize correctness, token safety, and deterministic output.
 | `query-slices` | List/get user slices with filtering |
 | `get-slivers` | List slivers (resources) in a slice |
 | `create-slice` | Create new slice with topology |
-| `modify-slice` | Modify existing slice topology (low-level, requires GraphML) |
-| `add-to-slice` | Add nodes, components, or networks to existing slice (high-level) |
+| `modify-slice-resources` | Add or remove nodes, components, or networks |
 | `accept-modify` | Accept pending slice modifications |
 | `renew-slice` | Extend slice lease time |
 | `delete-slice` | Delete slice and release resources |
@@ -678,7 +677,7 @@ filters = "lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2"
 1. **Create**: `create-slice` with graph model + SSH keys
 2. **Monitor**: `query-slices` to check state progression
 3. **Inspect**: `get-slivers` to see allocated resources
-4. **Modify**: `modify-slice` + `accept-modify` to add/remove resources
+4. **Modify**: `modify-slice-resources` + `accept-modify` to add/remove resources
 5. **Extend**: `renew-slice` to prevent expiration
 6. **Cleanup**: `delete-slice` to release resources
 
@@ -746,28 +745,45 @@ For slices with `FABNetv4Ext` or `FABNetv6Ext` networks, external access require
 
 **Note:** For IPv4, due to limited address space, a single subnet is shared across all slices at a site requesting FABNetv4Ext.
 
-### Modifying Existing Slices (add-to-slice)
+### Modifying Existing Slices (modify-slice-resources)
 
-Use `add-to-slice` to add nodes, components, or networks to an existing slice:
+Use `modify-slice-resources` to add OR remove nodes, components, or networks from an existing slice. Submits with `wait=False` (non-blocking).
 
+**Add nodes, components, and networks:**
 ```json
 {
-  "tool": "add-to-slice",
+  "tool": "modify-slice-resources",
   "params": {
     "slice_name": "my-slice",
-    "nodes": [{"name": "node3", "site": "UTAH", "cores": 8}],
-    "components": [{"node": "node1", "model": "NIC_Basic"}],
-    "networks": [{"name": "net2", "nodes": ["node1", "node3"]}]
+    "add_nodes": [{"name": "node3", "site": "UTAH", "cores": 8}],
+    "add_components": [{"node": "node1", "model": "NIC_Basic"}],
+    "add_networks": [{"name": "net2", "nodes": ["node1", "node3"]}]
+  }
+}
+```
+
+**Remove nodes, components, and networks:**
+```json
+{
+  "tool": "modify-slice-resources",
+  "params": {
+    "slice_name": "my-slice",
+    "remove_networks": ["net1"],
+    "remove_components": [{"node": "node1", "name": "old-nic"}],
+    "remove_nodes": ["node2"]
   }
 }
 ```
 
 **Key points:**
+- **Remove operations execute BEFORE add operations**
+- Remove networks before removing nodes that are connected to them
 - The tool fetches the latest slice topology before modifications
 - New nodes can include components in their specification
 - Components can be added to existing nodes separately
 - Networks can connect any combination of existing and new nodes
 - All NIC/network type auto-selection rules from `build-slice` apply
+- Returns structured result with `added` and `removed` sections
 
 ### Slice States Flow
 

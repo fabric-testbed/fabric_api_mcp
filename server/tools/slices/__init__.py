@@ -5,11 +5,11 @@ Tools are organized by concern (listing, lifecycle, modification, builder, netwo
 individual modules focused and make future expansion simpler.
 """
 from server.tools.slices import add_to_slice, builder, lifecycle, listing, modify, network
-from server.tools.slices.add_to_slice import add_to_slice as add_to_slice_fn
+from server.tools.slices.add_to_slice import modify_slice_resources
 from server.tools.slices.builder import build_slice
 from server.tools.slices.lifecycle import delete_slice, renew_slice
 from server.tools.slices.listing import get_slivers, query_slices
-from server.tools.slices.modify import accept_modify, modify_slice
+from server.tools.slices.modify import accept_modify
 from server.tools.slices.network import get_network_info, make_ip_publicly_routable
 
 # Aggregate exported tool callables for FastMCP registration
@@ -33,11 +33,10 @@ __all__ = [
     "get_slivers",
     "renew_slice",
     "delete_slice",
-    "modify_slice",
     "accept_modify",
     "build_slice",
     "make_ip_publicly_routable",
     "get_network_info",
-    "add_to_slice_fn",
+    "modify_slice_resources",
     "TOOLS",
 ]
