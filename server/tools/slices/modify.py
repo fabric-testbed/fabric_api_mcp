@@ -3,40 +3,11 @@ Slice modification tools for FABRIC MCP Server.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
-
-
-@tool_logger("modify-slice")
-async def modify_slice(
-    
-    slice_id: str,
-    graph_model: str,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Modify an existing FABRIC slice topology.
-
-    Args:
-        slice_id: UUID of the slice to modify.
-        graph_model: Updated slice topology graph model.
-
-    Returns:
-        List of sliver dictionaries with modification results.
-    """
-    fm, id_token = get_fabric_manager()
-    slivers = await call_threadsafe(
-        fm.modify_slice,
-        id_token=id_token,
-        slice_id=slice_id,
-        graph_model=graph_model,
-        return_fmt="dict",
-    )
-    return slivers
 
 
 @tool_logger("accept-modify")
@@ -66,4 +37,4 @@ async def accept_modify(
     return accepted
 
 
-TOOLS = [modify_slice, accept_modify]
+TOOLS = [accept_modify]
