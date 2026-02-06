@@ -795,6 +795,42 @@ StableOK -> ModifyOK (after successful modify)
 Any -> Closing -> Dead (deletion in progress)
 ```
 
+### SSH Access to VMs
+
+To access FABRIC VMs after provisioning:
+
+**Prerequisites:**
+1. **Bastion keys** — Create at https://portal.fabric-testbed.net/experiments#sshKeys
+2. **Slice SSH keys** — Keys specified when creating the slice (via `build-slice`)
+3. **Bastion login** — Get via `get-user-info` tool (e.g., `kthare10_0011904101`)
+
+**SSH Config (~/.ssh/config):**
+```
+UserKnownHostsFile /dev/null
+StrictHostKeyChecking no
+ServerAliveInterval 120
+
+Host bastion.fabric-testbed.net
+    User <bastion_login>
+    ForwardAgent yes
+    Hostname %h
+    IdentityFile ~/.ssh/bastion_key
+    IdentitiesOnly yes
+
+Host * !bastion.fabric-testbed.net
+    ProxyJump <bastion_login>@bastion.fabric-testbed.net:22
+```
+
+**SSH Command:**
+```bash
+ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_management_ip>
+```
+
+**Notes:**
+- VM management IP (IPv6) is in `get-slivers` output
+- Default username is `ubuntu` for Rocky/Ubuntu images
+- The bastion host acts as a jump host for all FABRIC VM access
+
 ---
 
 ## 9. POA Operations

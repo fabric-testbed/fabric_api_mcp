@@ -357,6 +357,38 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 - Site auto-selection: if `site` is omitted from a node, a random site with sufficient resources is chosen automatically
 - Multi-site FABNet*: when nodes span multiple sites with FABNet* types, creates per-site networks (e.g., `mynet-UTAH`, `mynet-STAR`) connecting all nodes at each site
 
+**SSH Access to VMs**
+
+To access FABRIC VMs, you need:
+1. **Bastion keys** — Create at https://portal.fabric-testbed.net/experiments#sshKeys
+2. **Slice SSH keys** — The keys specified when creating the slice
+3. **SSH config** — Configure your `~/.ssh/config`:
+
+```
+UserKnownHostsFile /dev/null
+StrictHostKeyChecking no
+ServerAliveInterval 120
+
+Host bastion.fabric-testbed.net
+    User <bastion_login>
+    ForwardAgent yes
+    Hostname %h
+    IdentityFile ~/.ssh/bastion_key
+    IdentitiesOnly yes
+
+Host * !bastion.fabric-testbed.net
+    ProxyJump <bastion_login>@bastion.fabric-testbed.net:22
+```
+
+Replace `<bastion_login>` with your bastion username (from `get-user-info` tool, e.g., `kthare10_0011904101`).
+
+**Example SSH command:**
+```bash
+ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_ipv6_address>
+```
+
+The VM's management IP (IPv6) is available from `get-slivers` output.
+
 ---
 
 ## System prompt
