@@ -76,6 +76,11 @@ Pass a **JSON dict** where each key is a field name and the value is either:
 
 **Operators:** `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in`, `contains`, `icontains`, `regex`, `any`, `all`
 
+**`contains` / `icontains` are polymorphic:**
+- **string** → substring match (e.g. `"FPGA"` in `"FPGA-Xilinx-U280"`)
+- **dict** → matches against any key (e.g. component dict keys like `"GPU-Tesla T4"`)
+- **list/set** → matches against stringified elements
+
 **Logical OR:** `{"or": [{...}, {...}]}`
 
 ```json
@@ -155,6 +160,19 @@ Sites returned by `query-sites` have these fields:
 {"ipv4_management": true}
 ```
 
+#### Filter by components
+
+```json
+// Sites with GPUs (matches component dict keys like "GPU-Tesla T4")
+{"components": {"contains": "GPU"}}
+
+// Sites with FPGAs and ≥32 available cores
+{"components": {"contains": "FPGA"}, "cores_available": {"gte": 32}}
+
+// Case-insensitive component search
+{"components": {"icontains": "connectx"}}
+```
+
 #### Complex multi-condition filters
 
 ```json
@@ -210,6 +228,19 @@ Hosts returned by `query-hosts` have these fields:
 
 // Hosts with ≥128 GB RAM available
 {"ram_available": {"gte": 128}}
+```
+
+#### Filter by components
+
+```json
+// Hosts with GPUs (matches keys like "GPU-Tesla T4", "GPU-RTX6000")
+{"components": {"contains": "GPU"}}
+
+// Hosts with FPGAs and ≥30 available cores
+{"components": {"contains": "FPGA"}, "cores_available": {"gte": 30}}
+
+// Hosts with SmartNICs (case-insensitive)
+{"components": {"icontains": "smartnic"}}
 ```
 
 #### Complex host filters
@@ -317,6 +348,7 @@ Note: `vlans` is a **string** (not a list), representing VLAN ranges.
 ### Important Notes
 
 - Use `icontains` for case-insensitive string matching
+- `contains` / `icontains` work on strings (substring), dicts (key match), and lists (element match)
 - Use `regex` with `(?i)` flag for complex case-insensitive patterns
 - Dot notation (e.g., `labels.region`) traverses nested dicts
 - Missing fields return `None`; comparison operators handle this gracefully
