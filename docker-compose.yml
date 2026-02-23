@@ -4,8 +4,8 @@ services:
       # Set the build context to the subdirectory containing the Dockerfile and code
       context: server/
       dockerfile: Dockerfile
-    container_name: fabric-prov-mcp
-    image: fabric-prov-mcp:latest
+    container_name: fabric-api-mcp
+    image: fabric-api-mcp:latest
     restart: always
     # The MCP server uses port 5000 internally (as defined in __main__.py)
     networks:
@@ -22,7 +22,7 @@ services:
 
   nginx:
     image: library/nginx:1
-    container_name: fabric-prov-nginx
+    container_name: fabric-api-nginx
     networks:
       - frontend
       - backend
