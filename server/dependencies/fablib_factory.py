@@ -3,14 +3,14 @@ Shared FablibManagerV2 factory for slice builder / modifier / network tools.
 """
 from __future__ import annotations
 
-from fabrictestbed_extensions.fablib.fablib_v2 import FablibManagerV2
+from fabrictestbed_extensions.fablib.fablib import FablibManager
 
 from server.config import config
 
 
-def create_fablib_manager(id_token: str) -> FablibManagerV2:
+def create_fablib_manager(id_token: str) -> FablibManager:
     """Create a FablibManagerV2 instance with the given id_token."""
-    return FablibManagerV2(
+    return FablibManager(
         id_token=id_token,
         credmgr_host=config.credmgr_host,
         orchestrator_host=config.orchestrator_host,
