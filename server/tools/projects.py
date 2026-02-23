@@ -11,17 +11,15 @@ from server.utils.async_helpers import call_threadsafe
 from server.utils.data_helpers import apply_sort, paginate
 
 
-@tool_logger("show-my-projects")
+@tool_logger("fabric_show_projects")
 async def show_my_projects(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     project_name: str = "all",
     project_id: str = "all",
     uuid: Optional[str] = None,
     sort: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = 200,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     Show Core API project info for the current user (or specified uuid).
 
@@ -34,7 +32,7 @@ async def show_my_projects(
         offset: Number of results to skip (default 0).
 
     Returns:
-        List of project records.
+        Dict with items, total, count, offset, has_more
     """
     fm, id_token = get_fabric_manager()
     items = await call_threadsafe(
@@ -51,15 +49,13 @@ async def show_my_projects(
 TOOLS = [show_my_projects]
 
 
-@tool_logger("list-project-users")
+@tool_logger("fabric_list_project_users")
 async def list_project_users(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     project_uuid: str = "",
     sort: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = 200,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     List users in a project.
 
@@ -70,7 +66,7 @@ async def list_project_users(
         offset: Results to skip (default 0).
 
     Returns:
-        List of user records.
+        Dict with items, total, count, offset, has_more
     """
     if not project_uuid:
         raise ValueError("project_uuid is required")
@@ -88,10 +84,8 @@ async def list_project_users(
 TOOLS.append(list_project_users)
 
 
-@tool_logger("get-user-keys")
+@tool_logger("fabric_get_user_keys")
 async def get_user_keys(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     user_uuid: Optional[str] = None,
     key_type: Optional[str] = "sliver",
 ) -> List[Dict[str, Any]]:
@@ -100,7 +94,7 @@ async def get_user_keys(
 
     Args:
         user_uuid: User UUID (person_uuid) required.
-        key_type: Optional key type filter (e.g., \"sliver\", \"bastion\"); default \"sliver\".
+        key_type: Optional key type filter (e.g., "sliver", "bastion"); default "sliver".
 
     Returns:
         List of key records.
@@ -117,10 +111,8 @@ async def get_user_keys(
 
 TOOLS.append(get_user_keys)
 
-@tool_logger("get-bastion-username")
+@tool_logger("fabric_get_bastion_username")
 async def get_bastion_username(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     user_uuid: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -143,10 +135,8 @@ async def get_bastion_username(
 
 TOOLS.append(get_bastion_username)
 
-@tool_logger("get-user-info")
+@tool_logger("fabric_get_user_info")
 async def get_user_info(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     self_info: bool = True,
     user_uuid: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -180,28 +170,6 @@ async def get_user_info(
 
     Example - fetch another user's info:
         get-user-info(self_info=False, user_uuid="43b7271b-90eb-45f6-833a-e51cf13bbc68")
-
-    Example response:
-        {
-          "results": [{
-            "uuid": "43b7271b-90eb-45f6-833a-e51cf13bbc68",
-            "name": "Komal Thareja",
-            "email": "kthare10@email.unc.edu",
-            "affiliation": "University of North Carolina at Chapel Hill",
-            "bastion_login": "kthare10_0011904101",
-            "fabric_id": "FABRIC1000015",
-            "roles": [
-              {"name": "990d8a8b-...-pm", "description": "FABRIC Staff"},
-              ...
-            ],
-            "sshkeys": [
-              {"fingerprint": "MD5:f5:fd:...", "ssh_key_type": "ecdsa-sha2-nistp256", ...}
-            ],
-            "profile": {"bio": "...", "job": "Sr Distributed Systems Software Engineer", ...}
-          }],
-          "size": 1,
-          "status": 200
-        }
     """
     fm, id_token = get_fabric_manager()
 
@@ -220,10 +188,8 @@ async def get_user_info(
 
 TOOLS.append(get_user_info)
 
-@tool_logger("add-public-key")
+@tool_logger("fabric_add_public_key")
 async def add_public_key(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     sliver_id: str = "",
     sliver_key_name: Optional[str] = None,
     email: Optional[str] = None,
@@ -250,10 +216,8 @@ async def add_public_key(
     return res if isinstance(res, list) else [res]
 
 
-@tool_logger("remove-public-key")
+@tool_logger("fabric_remove_public_key")
 async def remove_public_key(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     sliver_id: str = "",
     sliver_key_name: Optional[str] = None,
     email: Optional[str] = None,
@@ -283,10 +247,8 @@ async def remove_public_key(
 TOOLS.extend([add_public_key, remove_public_key])
 
 
-@tool_logger("os-reboot")
+@tool_logger("fabric_os_reboot")
 async def os_reboot(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     sliver_id: str = "",
 ) -> List[Dict[str, Any]]:
     """

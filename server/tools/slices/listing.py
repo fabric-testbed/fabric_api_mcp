@@ -11,11 +11,8 @@ from server.utils.async_helpers import call_threadsafe
 from server.utils.data_helpers import normalize_list_param
 
 
-@tool_logger("query-slices")
+@tool_logger("fabric_query_slices")
 async def query_slices(
-
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
     as_self: bool = True,
     slice_id: Optional[str] = None,
     slice_name: Optional[str] = None,
@@ -100,13 +97,10 @@ async def query_slices(
     return out
 
 
-@tool_logger("get-slivers")
+@tool_logger("fabric_get_slivers")
 async def get_slivers(
-    
     slice_id: str,
     as_self: bool = True,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     List all slivers (resource allocations) in a slice.

@@ -3,20 +3,17 @@ Slice lifecycle tools for FABRIC MCP Server.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional
 
 from server.dependencies.fabric_manager import get_fabric_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
-from server.utils.data_helpers import normalize_list_param
 
 
-@tool_logger("renew-slice")
+@tool_logger("fabric_renew_slice")
 async def renew_slice(
     slice_id: str,
     lease_end_time: str,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Renew a FABRIC slice lease.
@@ -35,17 +32,15 @@ async def renew_slice(
     return {"status": "ok", "slice_id": slice_id, "lease_end_time": lease_end_time}
 
 
-@tool_logger("delete-slice")
+@tool_logger("fabric_delete_slice")
 async def delete_slice(
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
-    slice_id: Optional[str] = None,
+    slice_id: str,
 ) -> Dict[str, Any]:
     """
     Delete a FABRIC slice.
 
     Args:
-        slice_id: Optional UUID of the slice to delete.
+        slice_id: UUID of the slice to delete.
     """
     fm, id_token = get_fabric_manager()
     await call_threadsafe(

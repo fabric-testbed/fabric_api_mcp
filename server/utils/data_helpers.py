@@ -1,13 +1,120 @@
 """
-Data manipulation utilities for sorting and pagination.
+Data manipulation utilities for sorting, pagination, and declarative filtering.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Declarative filter engine
+# ---------------------------------------------------------------------------
+
+def _resolve_field(record: Dict[str, Any], field: str) -> Any:
+    """Resolve a possibly dot-notated field from a dict (e.g. 'components.GPU')."""
+    parts = field.split(".")
+    val: Any = record
+    for p in parts:
+        if isinstance(val, dict):
+            val = val.get(p)
+        else:
+            return None
+    return val
+
+
+def _match_operator(value: Any, op: str, operand: Any) -> bool:
+    """Evaluate a single operator against a value."""
+    if op == "eq":
+        return value == operand
+    if op == "ne":
+        return value != operand
+    if op == "lt":
+        return value is not None and value < operand
+    if op == "lte":
+        return value is not None and value <= operand
+    if op == "gt":
+        return value is not None and value > operand
+    if op == "gte":
+        return value is not None and value >= operand
+    if op == "in":
+        return value in operand
+    if op == "contains":
+        return isinstance(value, str) and operand in value
+    if op == "icontains":
+        return isinstance(value, str) and operand.lower() in value.lower()
+    if op == "regex":
+        return isinstance(value, str) and bool(re.search(operand, value))
+    if op == "any":
+        # value is iterable, at least one element satisfies sub-filter
+        if not isinstance(value, (list, tuple, set)):
+            return False
+        return any(_match_record_filters({"_v": v}, {"_v": operand}) for v in value)
+    if op == "all":
+        if not isinstance(value, (list, tuple, set)):
+            return False
+        return all(_match_record_filters({"_v": v}, {"_v": operand}) for v in value)
+    raise ValueError(f"Unknown filter operator: {op}")
+
+
+def _match_record_filters(record: Dict[str, Any], filters: Dict[str, Any]) -> bool:
+    """
+    Return True if *record* satisfies every clause in *filters*.
+
+    Each key in *filters* is either:
+      - "or"  → list of sub-filter dicts (logical OR)
+      - a field name → value (shorthand for {"eq": value}) or dict of {op: operand}
+    """
+    for key, spec in filters.items():
+        if key == "or":
+            if not isinstance(spec, list) or not spec:
+                continue
+            if not any(_match_record_filters(record, sub) for sub in spec):
+                return False
+            continue
+
+        field_val = _resolve_field(record, key)
+
+        if isinstance(spec, dict):
+            for op, operand in spec.items():
+                if not _match_operator(field_val, op, operand):
+                    return False
+        else:
+            # Shorthand: {"field": value} is eq
+            if field_val != spec:
+                return False
+    return True
+
+
+def apply_filters(
+    items: List[Dict[str, Any]],
+    filters: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Apply a declarative JSON filter DSL to a list of records.
+
+    Supports field-level operators (eq, ne, lt, lte, gt, gte, in, contains,
+    icontains, regex, any, all) and logical OR via {"or": [{...}, {...}]}.
+
+    Examples::
+
+        # Cores >= 32
+        {"cores_available": {"gte": 32}}
+
+        # Site is UCSD or STAR with >=32 cores
+        {"or": [{"site": {"icontains": "UCSD"}}, {"site": {"icontains": "STAR"}}],
+         "cores_available": {"gte": 32}}
+
+        # Exact match shorthand
+        {"name": "RENC"}
+    """
+    if not filters:
+        return items
+    return [r for r in items if _match_record_filters(r, filters)]
 
 
 def normalize_list_param(
@@ -119,9 +226,9 @@ def apply_sort(items: List[Dict[str, Any]], sort: Optional[Dict[str, Any]]) -> L
     return sorted(items, key=lambda r: (r.get(field) is None, r.get(field)), reverse=reverse)
 
 
-def paginate(items: List[Dict[str, Any]], limit: Optional[int], offset: int) -> List[Dict[str, Any]]:
+def paginate(items: List[Dict[str, Any]], limit: Optional[int], offset: int) -> Dict[str, Any]:
     """
-    Apply pagination to a list of items.
+    Apply pagination to a list of items and return metadata.
 
     Args:
         items: List to paginate
@@ -129,9 +236,18 @@ def paginate(items: List[Dict[str, Any]], limit: Optional[int], offset: int) -> 
         offset: Number of items to skip from the start
 
     Returns:
-        Paginated slice of the items list
+        Dict with keys: items, total, count, offset, has_more
     """
+    total = len(items)
     start = max(0, int(offset or 0))
     if limit is None:
-        return items[start:]
-    return items[start : start + max(0, int(limit))]
+        sliced = items[start:]
+    else:
+        sliced = items[start : start + max(0, int(limit))]
+    return {
+        "items": sliced,
+        "total": total,
+        "count": len(sliced),
+        "offset": start,
+        "has_more": (start + len(sliced)) < total,
+    }

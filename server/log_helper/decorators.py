@@ -15,7 +15,7 @@ log = logging.getLogger("server.tools")
 REDACT_PARAMS = frozenset({"token", "password", "secret", "key", "credential", "auth"})
 
 # Parameters to skip in logs (too verbose or not useful)
-SKIP_PARAMS = frozenset({"toolCallId", "tool_call_id"})
+SKIP_PARAMS: frozenset = frozenset()
 
 
 def _sanitize_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -64,7 +64,7 @@ def tool_logger(tool_name: str) -> Callable:
                     rid = ctx.request.headers.get("x-request-id")
             except Exception:
                 pass
-            rid = rid or kwargs.get("toolCallId") or kwargs.get("tool_call_id") or uuid.uuid4().hex[:12]
+            rid = rid or uuid.uuid4().hex[:12]
 
             # Log tool invocation with parameters at DEBUG level
             sanitized_params = _sanitize_params(kwargs)

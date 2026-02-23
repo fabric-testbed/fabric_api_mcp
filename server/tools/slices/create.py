@@ -14,7 +14,7 @@ from fabrictestbed_extensions.fablib.fablib_v2 import FablibManagerV2
 from fastmcp.server.dependencies import get_http_headers
 
 from server.auth.token import extract_bearer_token
-from server.config import config
+from server.dependencies.fablib_factory import create_fablib_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
 from server.utils.data_helpers import normalize_list_param
@@ -168,7 +168,7 @@ def _select_nic_for_network(net_type: str, bandwidth: Optional[int] = None) -> s
     - L2PTP always requires a SmartNIC (bandwidth determines which one)
     - 100 Gbps bandwidth → NIC_ConnectX_6
     - 25 Gbps bandwidth → NIC_ConnectX_5
-    - No bandwidth or other L2/L3 types → NIC_Basic
+    - No bandwidth or other network types → NIC_Basic
     """
     if net_type == "L2PTP":
         # L2PTP requires SmartNIC; pick based on bandwidth
@@ -180,29 +180,6 @@ def _select_nic_for_network(net_type: str, bandwidth: Optional[int] = None) -> s
         return DEFAULT_SMARTNIC
     # All other network types use NIC_Basic
     return "NIC_Basic"
-
-
-def _get_fablib_manager(id_token: str) -> FablibManagerV2:
-    """
-    Create a FablibManager instance with the given id_token.
-
-    Args:
-        id_token: The bearer token for authentication.
-
-    Returns:
-        Configured FablibManager instance.
-    """
-    return FablibManagerV2(
-        id_token=id_token,
-        credmgr_host=config.credmgr_host,
-        orchestrator_host=config.orchestrator_host,
-        core_api_host=config.core_api_host,
-        am_host=config.am_host,
-        auto_token_refresh=False,
-        validate_config=False,
-        log_level=config.log_level,
-        log_path=True
-    )
 
 
 def _get_available_sites(fablib: FablibManagerV2, update: bool = True) -> List[Dict[str, Any]]:
@@ -273,7 +250,7 @@ def _build_and_submit_slice(
 
     This function runs synchronously and should be called via call_threadsafe.
     """
-    fablib = _get_fablib_manager(id_token)
+    fablib = create_fablib_manager(id_token)
 
     # Create a new slice
     logger.info(f"Creating new slice: {name}")
@@ -490,7 +467,7 @@ def _build_and_submit_slice(
     }
 
 
-@tool_logger("build-slice")
+@tool_logger("fabric_build_slice")
 async def build_slice(
     name: str,
     ssh_keys: Union[str, List[str]],
@@ -499,8 +476,6 @@ async def build_slice(
     lifetime: Optional[int] = None,
     lease_start_time: Optional[str] = None,
     lease_end_time: Optional[str] = None,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Build and create a FABRIC slice from high-level specifications.

@@ -11,8 +11,8 @@ from fabrictestbed_extensions.fablib.fablib_v2 import FablibManagerV2
 from fastmcp.server.dependencies import get_http_headers
 
 from server.auth.token import extract_bearer_token
-from server.config import config
 from server.dependencies.fabric_manager import get_fabric_manager
+from server.dependencies.fablib_factory import create_fablib_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
 
@@ -36,21 +36,6 @@ from server.tools.slices.create import (
 logger = logging.getLogger(__name__)
 
 
-def _get_fablib_manager(id_token: str) -> FablibManagerV2:
-    """Create a FablibManager instance with the given id_token."""
-    return FablibManagerV2(
-        id_token=id_token,
-        credmgr_host=config.credmgr_host,
-        orchestrator_host=config.orchestrator_host,
-        core_api_host=config.core_api_host,
-        am_host=config.am_host,
-        auto_token_refresh=False,
-        validate_config=False,
-        log_level=config.log_level,
-        log_path=True
-    )
-
-
 def _modify_slice_resources(
     id_token: str,
     slice_name: Optional[str] = None,
@@ -69,7 +54,7 @@ def _modify_slice_resources(
 
     This function runs synchronously and should be called via call_threadsafe.
     """
-    fablib = _get_fablib_manager(id_token)
+    fablib = create_fablib_manager(id_token)
 
     # Get the existing slice - IMPORTANT: always get latest before modifications
     logger.info(f"Getting slice: name={slice_name}, id={slice_id}")
@@ -386,7 +371,7 @@ def _modify_slice_resources(
     }
 
 
-@tool_logger("modify-slice-resources")
+@tool_logger("fabric_modify_slice")
 async def modify_slice_resources(
     slice_name: Optional[str] = None,
     slice_id: Optional[str] = None,
@@ -398,8 +383,6 @@ async def modify_slice_resources(
     remove_nodes: Optional[List[str]] = None,
     remove_components: Optional[List[Dict[str, str]]] = None,
     remove_networks: Optional[List[str]] = None,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Add or remove nodes, components, and/or networks from an existing slice.
@@ -455,64 +438,11 @@ async def modify_slice_resources(
         - added: {nodes: [...], components: [...], networks: [...]}
         - removed: {nodes: [...], components: [...], networks: [...]}
 
-    Example - Add a new node with GPU:
-        modify-slice-resources(
-            slice_name="my-slice",
-            add_nodes=[{
-                "name": "node3",
-                "site": "UTAH",
-                "cores": 16,
-                "components": [{"model": "GPU_TeslaT4"}]
-            }]
-        )
-
-    Example - Remove a node and its connected network:
-        modify-slice-resources(
-            slice_name="my-slice",
-            remove_networks=["net1"],
-            remove_nodes=["node2"]
-        )
-
-    Example - Add NIC to existing node and remove old component:
-        modify-slice-resources(
-            slice_name="my-slice",
-            add_components=[{"node": "node1", "model": "NIC_ConnectX_6"}],
-            remove_components=[{"node": "node1", "name": "old-nic"}]
-        )
-
-    Example - Add network connecting existing nodes:
-        modify-slice-resources(
-            slice_name="my-slice",
-            add_networks=[{
-                "name": "internal-net",
-                "nodes": ["node1", "node2"],
-                "subnet": "192.168.2.0/24"
-            }]
-        )
-
     Note:
         - Remove operations are performed BEFORE add operations
         - Remove networks before removing nodes that are connected to them
         - The slice is submitted with wait=False (non-blocking)
-        - Use query-slices to check slice state after modification
-
-    SSH Access to VMs:
-        After slice reaches StableOK/ModifyOK, access VMs via the FABRIC bastion host.
-        1. Create bastion keys at https://portal.fabric-testbed.net/experiments#sshKeys
-        2. Get bastion_login from get-user-info tool
-        3. Configure SSH (~/.ssh/config) with bastion ProxyJump
-        4. SSH command: ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_ip>
-        See build-slice docstring for full SSH config example.
-
-    IP Assignment by Network Type:
-        - L2 (L2PTP, L2STS, L2Bridge): User chooses any subnet, assigns IPs manually
-        - L3 (FABNetv4, FABNetv6): Orchestrator assigns subnet; use get-network-info
-          to see it, then assign IPs from that subnet
-        - L3 Ext (FABNetv4Ext, FABNetv6Ext): Call make-ip-publicly-routable, then
-          configure the RETURNED public_ips inside your VM
-
-        FABNetv4Ext: Shared subnet at site; requested IP may differ from returned IP.
-        FABNetv6Ext: Dedicated subnet; any IP from subnet works.
+        - Use fabric_query_slices to check slice state after modification
     """
     headers = get_http_headers() or {}
     id_token = extract_bearer_token(headers)
@@ -544,13 +474,9 @@ async def modify_slice_resources(
 
     return result
 
-@tool_logger("accept-modify")
+@tool_logger("fabric_accept_modify")
 async def accept_modify(
-    
     slice_id: str,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
-    
 ) -> Dict[str, Any]:
     """
     Accept pending slice modifications.
