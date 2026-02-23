@@ -7,7 +7,6 @@ import logging
 from ipaddress import IPv4Network
 from typing import Any, Dict, List, Optional, Union
 
-from fabrictestbed_extensions.fablib.fablib_v2 import FablibManagerV2
 from fastmcp.server.dependencies import get_http_headers
 
 from server.auth.token import extract_bearer_token
