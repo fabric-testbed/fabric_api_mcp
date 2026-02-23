@@ -244,10 +244,10 @@ def _modify_slice_resources(
             elif interface_specs:
                 connected_nodes = [ispec.get("node") for ispec in interface_specs]
 
-            if len(interface_specs) < 2:
-                raise ValueError(
-                    f"Network {net_name} must connect at least 2 nodes/interfaces"
-                )
+            #if len(interface_specs) < 2:
+            #    raise ValueError(
+            #        f"Network {net_name} must connect at least 2 nodes/interfaces"
+            #    )
 
             # Validate all referenced nodes exist
             for node_name in connected_nodes:
