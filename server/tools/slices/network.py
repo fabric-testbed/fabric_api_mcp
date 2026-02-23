@@ -49,6 +49,8 @@ def _make_ip_publicly_routable(
 
     # Get network type
     net_type = network.get_type()
+    if net_type:
+        net_type = str(net_type)
     logger.info(f"Network type: {net_type}")
 
     # Validate network type is FABNetv*Ext
