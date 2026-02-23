@@ -42,6 +42,7 @@ class FabricManagerFactory:
             orchestrator_host=self.config.orchestrator_host,
             core_api_host=self.config.core_api_host,
             http_debug=self.config.http_debug,
+            id_token=token
         )
         return fm, token
 
