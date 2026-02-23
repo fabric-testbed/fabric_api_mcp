@@ -86,7 +86,7 @@ def _make_ip_publicly_routable(
 
     # Submit the slice to apply changes
     logger.info("Submitting slice to apply public IP routing changes")
-    slice_obj.submit()
+    slice_obj.submit(wait=False)
 
     # Get the public IPs after submit
     public_ips = network.get_public_ips()
