@@ -43,6 +43,9 @@ Prioritize correctness, token safety, and deterministic output.
 |:-----|:--------|
 | `fabric_query_slices` | List/get user slices with filtering |
 | `fabric_get_slivers` | List slivers (resources) in a slice |
+| `fabric_list_nodes` | List all nodes in a slice with details |
+| `fabric_list_networks` | List all networks in a slice with details |
+| `fabric_list_interfaces` | List all interfaces in a slice with details |
 | `fabric_build_slice` | Build and create a new slice (high-level declarative) |
 | `fabric_modify_slice` | Add or remove nodes, components, or networks |
 | `fabric_accept_modify` | Accept pending slice modifications |

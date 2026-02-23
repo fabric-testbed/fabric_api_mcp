@@ -45,6 +45,7 @@ from server.tools.slices.create import build_slice
 from server.tools.slices.modify import modify_slice_resources, accept_modify
 from server.tools.slices.lifecycle import renew_slice, delete_slice
 from server.tools.slices.network import make_ip_publicly_routable, get_network_info
+from server.tools.slices.inspect import list_nodes, list_networks, list_interfaces
 from server.tools.projects import (
     show_my_projects, list_project_users, get_user_keys,
     get_bastion_username, get_user_info, add_public_key,
@@ -176,6 +177,22 @@ TOOL_REGISTRY = [
         "fn": delete_slice,
         "name": "fabric_delete_slice",
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    },
+    # Slice inspection (read-only, idempotent)
+    {
+        "fn": list_nodes,
+        "name": "fabric_list_nodes",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": list_networks,
+        "name": "fabric_list_networks",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": list_interfaces,
+        "name": "fabric_list_interfaces",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     },
     # Network tools
     {
