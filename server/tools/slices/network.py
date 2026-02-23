@@ -8,30 +8,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from fabrictestbed_extensions.fablib.fablib_v2 import FablibManagerV2
 from fastmcp.server.dependencies import get_http_headers
 
 from server.auth.token import extract_bearer_token
-from server.config import config
+from server.dependencies.fablib_factory import create_fablib_manager
 from server.log_helper.decorators import tool_logger
 from server.utils.async_helpers import call_threadsafe
 
 logger = logging.getLogger(__name__)
-
-
-def _get_fablib_manager(id_token: str) -> FablibManagerV2:
-    """Create a FablibManager instance with the given id_token."""
-    return FablibManagerV2(
-        id_token=id_token,
-        credmgr_host=config.credmgr_host,
-        orchestrator_host=config.orchestrator_host,
-        core_api_host=config.core_api_host,
-        am_host=config.am_host,
-        auto_token_refresh=False,
-        validate_config=False,
-        log_level=config.log_level,
-        log_path=True
-    )
 
 
 def _make_ip_publicly_routable(
@@ -47,7 +31,7 @@ def _make_ip_publicly_routable(
 
     This function runs synchronously and should be called via call_threadsafe.
     """
-    fablib = _get_fablib_manager(id_token)
+    fablib = create_fablib_manager(id_token)
 
     # Get the slice
     logger.info(f"Getting slice: name={slice_name}, id={slice_id}")
@@ -128,7 +112,7 @@ def _get_network_info(
 
     This function runs synchronously and should be called via call_threadsafe.
     """
-    fablib = _get_fablib_manager(id_token)
+    fablib = create_fablib_manager(id_token)
 
     # Get the slice
     logger.info(f"Getting slice: name={slice_name}, id={slice_id}")
@@ -162,15 +146,13 @@ def _get_network_info(
     }
 
 
-@tool_logger("make-ip-publicly-routable")
+@tool_logger("fabric_make_ip_routable")
 async def make_ip_publicly_routable(
     network_name: str,
     slice_name: Optional[str] = None,
     slice_id: Optional[str] = None,
     ipv4: Optional[Union[str, List[str]]] = None,
     ipv6: Optional[Union[str, List[str]]] = None,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Make IP addresses publicly routable on a FABNetv4Ext or FABNetv6Ext network.
@@ -202,19 +184,6 @@ async def make_ip_publicly_routable(
         - public_ips: List of publicly routable IPs
         - gateway: Network gateway IP
         - subnet: Network subnet
-
-    Example - Make first available IP public on FABNetv4Ext:
-        make-ip-publicly-routable(
-            slice_name="my-slice",
-            network_name="net1"
-        )
-
-    Example - Make specific IPv4 addresses public:
-        make-ip-publicly-routable(
-            slice_name="my-slice",
-            network_name="net1",
-            ipv4=["10.128.0.2", "10.128.0.3"]
-        )
 
     Note:
         - Only works with FABNetv4Ext and FABNetv6Ext network types
@@ -256,13 +225,11 @@ async def make_ip_publicly_routable(
     return result
 
 
-@tool_logger("get-network-info")
+@tool_logger("fabric_get_network_info")
 async def get_network_info(
     network_name: str,
     slice_name: Optional[str] = None,
     slice_id: Optional[str] = None,
-    toolCallId: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get detailed information about a network in a slice.
@@ -286,21 +253,6 @@ async def get_network_info(
         - available_ips: First 10 available IPs (use for make-ip-publicly-routable)
         - available_ips_count: Total count of available IPs
         - public_ips: List of IPs already marked as publicly routable
-
-    Example:
-        get-network-info(slice_name="my-slice", network_name="net1")
-
-    IP Assignment by Network Type:
-        - **L2 networks** (L2PTP, L2STS, L2Bridge): User chooses any subnet and
-          assigns IPs manually to VM interfaces. Full control over addressing.
-
-        - **L3 networks** (FABNetv4, FABNetv6): Orchestrator assigns the subnet.
-          Use get-network-info to see the subnet, then assign IPs from that
-          subnet to your VM interfaces.
-
-        - **L3 Ext networks** (FABNetv4Ext, FABNetv6Ext): Orchestrator assigns
-          the subnet. Use make-ip-publicly-routable to request public IPs,
-          then configure the returned public_ips inside your VM.
     """
     # Extract bearer token from request
     headers = get_http_headers() or {}

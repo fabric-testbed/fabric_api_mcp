@@ -37,8 +37,19 @@ log = logging.getLogger("fabric.mcp")
 
 # Import other modules
 
-# Import tool implementations and registry
-from server.tools import ALL_TOOLS, slices, topology
+# Import tool implementations
+from server.tools import slices, topology
+from server.tools.topology import query_sites, query_hosts, query_facility_ports, query_links
+from server.tools.slices.listing import query_slices, get_slivers
+from server.tools.slices.create import build_slice
+from server.tools.slices.modify import modify_slice_resources, accept_modify
+from server.tools.slices.lifecycle import renew_slice, delete_slice
+from server.tools.slices.network import make_ip_publicly_routable, get_network_info
+from server.tools.projects import (
+    show_my_projects, list_project_users, get_user_keys,
+    get_bastion_username, get_user_info, add_public_key,
+    remove_public_key, os_reboot,
+)
 
 # Print configuration on startup
 config.print_startup_info()
@@ -101,12 +112,129 @@ if hasattr(mcp, "app") and mcp.app:
     mcp.app.add_event_handler("shutdown", _on_shutdown)
 
 # ---------------------------------------
-# Register MCP Tools
+# Tool Registry with Names & Annotations
 # ---------------------------------------
+# Each entry maps a tool function to its registered name and MCP annotations.
+# Annotations: readOnlyHint (T=read-only), destructiveHint (T=destructive),
+#              idempotentHint (T=safe to retry), openWorldHint (T=external interaction)
+TOOL_REGISTRY = [
+    # Topology (read-only, idempotent)
+    {
+        "fn": query_sites,
+        "name": "fabric_query_sites",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": query_hosts,
+        "name": "fabric_query_hosts",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": query_facility_ports,
+        "name": "fabric_query_facility_ports",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": query_links,
+        "name": "fabric_query_links",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    # Slice listing (read-only, idempotent)
+    {
+        "fn": query_slices,
+        "name": "fabric_query_slices",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": get_slivers,
+        "name": "fabric_get_slivers",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    # Slice creation / modification (write)
+    {
+        "fn": build_slice,
+        "name": "fabric_build_slice",
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+    },
+    {
+        "fn": modify_slice_resources,
+        "name": "fabric_modify_slice",
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+    },
+    {
+        "fn": accept_modify,
+        "name": "fabric_accept_modify",
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+    },
+    # Slice lifecycle
+    {
+        "fn": renew_slice,
+        "name": "fabric_renew_slice",
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": delete_slice,
+        "name": "fabric_delete_slice",
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    },
+    # Network tools
+    {
+        "fn": get_network_info,
+        "name": "fabric_get_network_info",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": make_ip_publicly_routable,
+        "name": "fabric_make_ip_routable",
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+    },
+    # Project / user tools (read-only, idempotent)
+    {
+        "fn": show_my_projects,
+        "name": "fabric_show_projects",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": list_project_users,
+        "name": "fabric_list_project_users",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": get_user_keys,
+        "name": "fabric_get_user_keys",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": get_bastion_username,
+        "name": "fabric_get_bastion_username",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": get_user_info,
+        "name": "fabric_get_user_info",
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    # POA key management (write)
+    {
+        "fn": add_public_key,
+        "name": "fabric_add_public_key",
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "fn": remove_public_key,
+        "name": "fabric_remove_public_key",
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    },
+    {
+        "fn": os_reboot,
+        "name": "fabric_os_reboot",
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    },
+]
 
-# Register all tools declared in server.tools.*.
-for tool in ALL_TOOLS:
-    mcp.tool(tool)
+# Register all tools with FastMCP using explicit names and annotations
+for entry in TOOL_REGISTRY:
+    mcp.tool(entry["fn"], name=entry["name"], annotations=entry["annotations"])
 
 # ---------------------------------------
 # MCP Prompt: fabric-system

@@ -25,39 +25,31 @@ Prioritize correctness, token safety, and deterministic output.
 
 | Tool | Purpose | Key Fields |
 |:-----|:--------|:-----------|
-| `query-sites` | List FABRIC sites | name, cores_*, ram_*, disk_*, components, hosts |
-| `query-hosts` | List worker hosts | site, name, cores_*, ram_*, disk_*, components |
-| `query-facility-ports` | List facility network ports | site, name, vlans, port, switch, labels |
-| `query-links` | List L2/L3 network links | name, layer, bandwidth, endpoints[{site,node,port}] |
-| `show-my-projects` | List Core API project info for the user | name, uuid, memberships, tags |
-| `list-project-users` | List users in a project | user_uuid, email, name, role |
-| `get-user-keys` | Fetch SSH/public keys for a user | keytype, fingerprint, public_key, comment |
-| `get-user-info` | Fetch user info (self_info=True for token owner, or self_info=False + user_uuid for others) | uuid, name, email, affiliation, bastion_login, roles, sshkeys, profile |
-| `add-public-key` | Add a public key to a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
-| `remove-public-key` | Remove a public key from a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
-| `os-reboot` | Reboot a NodeSliver via POA | sliver_id (NodeSliver) |
+| `fabric_query_sites` | List FABRIC sites | name, cores_*, ram_*, disk_*, components, hosts |
+| `fabric_query_hosts` | List worker hosts | site, name, cores_*, ram_*, disk_*, components |
+| `fabric_query_facility_ports` | List facility network ports | site, name, vlans, port, switch, labels |
+| `fabric_query_links` | List L2/L3 network links | name, layer, bandwidth, endpoints[{site,node,port}] |
+| `fabric_show_projects` | List Core API project info for the user | name, uuid, memberships, tags |
+| `fabric_list_project_users` | List users in a project | user_uuid, email, name, role |
+| `fabric_get_user_keys` | Fetch SSH/public keys for a user | keytype, fingerprint, public_key, comment |
+| `fabric_get_user_info` | Fetch user info (self_info=True for token owner, or self_info=False + user_uuid for others) | uuid, name, email, affiliation, bastion_login, roles, sshkeys, profile |
+| `fabric_add_public_key` | Add a public key to a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
+| `fabric_remove_public_key` | Remove a public key from a NodeSliver (by key name or raw key) | sliver_id (NodeSliver), sliver_key_name/email or sliver_public_key ("{ssh_key_type} {public_key}") |
+| `fabric_os_reboot` | Reboot a NodeSliver via POA | sliver_id (NodeSliver) |
 
 ### Slice Management Tools
 
 | Tool | Purpose |
 |:-----|:--------|
-| `query-slices` | List/get user slices with filtering |
-| `get-slivers` | List slivers (resources) in a slice |
-| `create-slice` | Create new slice with topology |
-| `modify-slice-resources` | Add or remove nodes, components, or networks |
-| `accept-modify` | Accept pending slice modifications |
-| `renew-slice` | Extend slice lease time |
-| `delete-slice` | Delete slice and release resources |
-| `get-network-info` | Get network details (available IPs, public IPs, gateway, subnet) |
-| `make-ip-publicly-routable` | Enable external access for FABNetv4Ext/FABNetv6Ext IPs |
-
-### Resource & Operation Tools
-
-| Tool | Purpose |
-|:-----|:--------|
-| `resources` | Query advertised topology model |
-| `poa-create` | Perform operational action (reboot, cpupin, etc.) |
-| `poa-get` | Get POA operation status |
+| `fabric_query_slices` | List/get user slices with filtering |
+| `fabric_get_slivers` | List slivers (resources) in a slice |
+| `fabric_build_slice` | Build and create a new slice (high-level declarative) |
+| `fabric_modify_slice` | Add or remove nodes, components, or networks |
+| `fabric_accept_modify` | Accept pending slice modifications |
+| `fabric_renew_slice` | Extend slice lease time |
+| `fabric_delete_slice` | Delete slice and release resources |
+| `fabric_get_network_info` | Get network details (available IPs, public IPs, gateway, subnet) |
+| `fabric_make_ip_routable` | Enable external access for FABNetv4Ext/FABNetv6Ext IPs |
 
 ---
 
@@ -72,24 +64,32 @@ Prioritize correctness, token safety, and deterministic output.
 
 ---
 
-## 3. Lambda Filters
+## 3. Declarative JSON Filters
 
-All query tools (`query-sites`, `query-hosts`, `query-facility-ports`, `query-links`) support **Python lambda functions** for filtering.
+All query tools (`fabric_query_sites`, `fabric_query_hosts`, `fabric_query_facility_ports`, `fabric_query_links`) support a **declarative JSON filter DSL**.
 
-### Lambda Filter Syntax
+### Filter Syntax
 
-Pass a **string** containing a Python lambda expression that takes a record dict `r` and returns `bool`:
+Pass a **JSON dict** where each key is a field name and the value is either:
+- A literal value (shorthand for `{"eq": value}`)
+- A dict of `{operator: operand}` pairs
 
-```python
-lambda r: <boolean expression>
-```
+**Operators:** `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in`, `contains`, `icontains`, `regex`, `any`, `all`
 
-**Important**: In MCP tool calls, pass the lambda as a **string**, not as code:
+**Logical OR:** `{"or": [{...}, {...}]}`
 
 ```json
 {
-  "id_token": "Bearer xxx",
-  "filters": "lambda r: r.get('cores_available', 0) >= 64"
+  "filters": {"cores_available": {"gte": 64}}
+}
+```
+
+```json
+{
+  "filters": {
+    "or": [{"site": {"icontains": "UCSD"}}, {"site": {"icontains": "STAR"}}],
+    "cores_available": {"gte": 32}
+  }
 }
 ```
 
@@ -121,64 +121,48 @@ Sites returned by `query-sites` have these fields:
 
 #### Filter by available resources
 
-```python
-# Sites with ≥64 cores available
-lambda r: r.get('cores_available', 0) >= 64
+```json
+// Sites with ≥64 cores available
+{"cores_available": {"gte": 64}}
 
-# Sites with ≥256 GB RAM available
-lambda r: r.get('ram_available', 0) >= 256
+// Sites with ≥256 GB RAM available
+{"ram_available": {"gte": 256}}
 
-# Sites with ≥10 TB disk available
-lambda r: r.get('disk_available', 0) >= 10000
+// Sites with ≥10 TB disk available
+{"disk_available": {"gte": 10000}}
 ```
 
 #### Filter by site name
 
-```python
-# Exact match
-lambda r: r.get('name') == 'RENC'
+```json
+// Exact match
+{"name": "RENC"}
 
-# Case-insensitive substring match
-lambda r: 'ucsd' in r.get('name', '').lower()
+// Case-insensitive substring match
+{"name": {"icontains": "ucsd"}}
 
-# Multiple sites (OR logic)
-lambda r: r.get('name') in ['RENC', 'UCSD', 'STAR']
+// Multiple sites (OR logic)
+{"or": [{"name": "RENC"}, {"name": "UCSD"}, {"name": "STAR"}]}
 ```
 
 #### Filter by capabilities
 
-```python
-# PTP-capable sites
-lambda r: r.get('ptp_capable') == True
+```json
+// PTP-capable sites
+{"ptp_capable": true}
 
-# Sites with IPv4 management
-lambda r: r.get('ipv4_management') == True
-```
-
-#### Filter by components
-
-```python
-# Sites with GPUs
-lambda r: 'GPU' in r.get('components', {})
-
-# Sites with specific GPU model
-lambda r: any('RTX' in str(gpu) for gpu in r.get('components', {}).get('GPU', {}).values())
-
-# Sites with ConnectX-6 NICs
-lambda r: any('ConnectX-6' in str(nic) for nic in r.get('components', {}).get('NIC', {}).values())
+// Sites with IPv4 management
+{"ipv4_management": true}
 ```
 
 #### Complex multi-condition filters
 
-```python
-# Sites with ≥32 cores AND ≥128 GB RAM available
-lambda r: r.get('cores_available', 0) >= 32 and r.get('ram_available', 0) >= 128
+```json
+// Sites with ≥32 cores AND ≥128 GB RAM available
+{"cores_available": {"gte": 32}, "ram_available": {"gte": 128}}
 
-# RENC, UCSD, or STAR sites with ≥64 cores
-lambda r: r.get('name') in ['RENC', 'UCSD', 'STAR'] and r.get('cores_available', 0) >= 64
-
-# Sites with GPUs AND at least 100 cores available
-lambda r: 'GPU' in r.get('components', {}) and r.get('cores_available', 0) >= 100
+// UCSD or STAR sites with ≥64 cores
+{"or": [{"name": "UCSD"}, {"name": "STAR"}], "cores_available": {"gte": 64}}
 ```
 
 ### Host Record Fields
@@ -214,62 +198,31 @@ Hosts returned by `query-hosts` have these fields:
 
 #### Filter by site and resources
 
-```python
-# Hosts at UCSD
-lambda r: r.get('site') == 'UCSD'
+```json
+// Hosts at UCSD
+{"site": "UCSD"}
 
-# Hosts at UCSD or RENC
-lambda r: r.get('site') in ['UCSD', 'RENC']
+// Hosts at UCSD or RENC
+{"or": [{"site": "UCSD"}, {"site": "RENC"}]}
 
-# Hosts with ≥32 cores available
-lambda r: r.get('cores_available', 0) >= 32
+// Hosts with ≥32 cores available
+{"cores_available": {"gte": 32}}
 
-# Hosts with ≥128 GB RAM available
-lambda r: r.get('ram_available', 0) >= 128
-```
-
-#### Filter by components
-
-```python
-# Hosts with any GPU
-lambda r: any('GPU' in comp for comp in r.get('components', {}).keys())
-
-# Hosts with Tesla T4 GPUs
-lambda r: 'GPU-Tesla T4' in r.get('components', {})
-
-# Hosts with available Tesla T4 GPUs
-lambda r: r.get('components', {}).get('GPU-Tesla T4', {}).get('capacity', 0) > r.get('components', {}).get('GPU-Tesla T4', {}).get('allocated', 0)
-
-# Hosts with ConnectX-6 NICs
-lambda r: any('ConnectX-6' in comp for comp in r.get('components', {}).keys())
-
-# Hosts with NVMe storage
-lambda r: any('NVME' in comp for comp in r.get('components', {}).keys())
-
-# Hosts with SmartNICs
-lambda r: any('SmartNIC' in comp for comp in r.get('components', {}).keys())
+// Hosts with ≥128 GB RAM available
+{"ram_available": {"gte": 128}}
 ```
 
 #### Complex host filters
 
-```python
-# UCSD hosts with ≥32 cores AND GPUs
-lambda r: r.get('site') == 'UCSD' and r.get('cores_available', 0) >= 32 and any('GPU' in comp for comp in r.get('components', {}).keys())
+```json
+// UCSD hosts with ≥32 cores
+{"site": "UCSD", "cores_available": {"gte": 32}}
 
-# Hosts with ≥64 cores, ≥256 GB RAM, and Tesla T4 GPUs
-lambda r: (
-    r.get('cores_available', 0) >= 64 and
-    r.get('ram_available', 0) >= 256 and
-    'GPU-Tesla T4' in r.get('components', {})
-)
+// Hosts with ≥64 cores and ≥256 GB RAM
+{"cores_available": {"gte": 64}, "ram_available": {"gte": 256}}
 
-# Hosts at multiple sites with available GPUs
-lambda r: (
-    r.get('site') in ['UCSD', 'RENC', 'STAR'] and
-    any('GPU' in comp for comp in r.get('components', {}).keys()) and
-    any(r.get('components', {}).get(comp, {}).get('capacity', 0) > r.get('components', {}).get(comp, {}).get('allocated', 0)
-        for comp in r.get('components', {}).keys() if 'GPU' in comp)
-)
+// Hosts at UCSD or STAR with ≥32 cores
+{"or": [{"site": "UCSD"}, {"site": "STAR"}], "cores_available": {"gte": 32}}
 ```
 
 ### Link Record Fields
@@ -297,33 +250,18 @@ Note: `site` is typically null in link endpoints.
 
 ### Link Filter Patterns
 
-```python
-# Links with ≥100 Gbps bandwidth
-lambda r: r.get('bandwidth', 0) >= 100
+```json
+// Links with ≥100 Gbps bandwidth
+{"bandwidth": {"gte": 100}}
 
-# L1 links only
-lambda r: r.get('layer') == 'L1'
+// L1 links only
+{"layer": "L1"}
 
-# L2 links only
-lambda r: r.get('layer') == 'L2'
+// High-bandwidth L1 links
+{"layer": "L1", "bandwidth": {"gte": 80}}
 
-# High-bandwidth L1 links
-lambda r: r.get('layer') == 'L1' and r.get('bandwidth', 0) >= 80
-
-# Links with specific port type (HundredGigE)
-lambda r: any('HundredGigE' in ep.get('port', '') for ep in r.get('endpoints', []))
-
-# Links with TenGigE ports
-lambda r: any('TenGigE' in ep.get('port', '') for ep in r.get('endpoints', []))
-
-# Links connecting specific switches (by name)
-lambda r: 'ucsd-data-sw' in r.get('name', '').lower()
-
-# Links between specific switches
-lambda r: (
-    'losa-data-sw' in r.get('name', '').lower() and
-    'ucsd-data-sw' in r.get('name', '').lower()
-)
+// Links matching a switch name (case-insensitive)
+{"name": {"icontains": "ucsd-data-sw"}}
 ```
 
 ### Facility Port Record Fields
@@ -353,44 +291,35 @@ Note: `vlans` is a **string** (not a list), representing VLAN ranges.
 
 ### Facility Port Filter Patterns
 
-```python
-# Ports at specific site
-lambda r: r.get('site') == 'UCSD'
+```json
+// Ports at specific site
+{"site": "UCSD"}
 
-# Ports at multiple sites
-lambda r: r.get('site') in ['UCSD', 'STAR', 'BRIST']
+// Ports at multiple sites (OR)
+{"or": [{"site": "UCSD"}, {"site": "STAR"}, {"site": "BRIST"}]}
 
-# Ports by name pattern
-lambda r: 'NRP' in r.get('name', '')
+// Ports by name pattern (case-insensitive)
+{"name": {"icontains": "NRP"}}
 
-# Ports with specific VLAN range (check labels)
-lambda r: '3110-3119' in r.get('labels', {}).get('vlan_range', [])
+// Cloud facility ports
+{"or": [{"site": "GCP"}, {"site": "AWS"}, {"site": "AZURE"}]}
 
-# Cloud facility ports (by site)
-lambda r: r.get('site') in ['GCP', 'AWS', 'AZURE']
+// StarLight facility ports
+{"name": {"contains": "StarLight"}}
 
-# Ports with wide VLAN range (multiple ranges in labels)
-lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2
+// 400G ports
+{"name": {"contains": "400G"}}
 
-# Ports with specific region in labels
-lambda r: r.get('labels', {}).get('region') == 'sjc-zone2-6'
-
-# StarLight facility ports (by name pattern)
-lambda r: 'StarLight' in r.get('name', '')
-
-# 400G ports (by name pattern)
-lambda r: '400G' in r.get('name', '')
-
-# Ports with HundredGigE switch ports
-lambda r: 'HundredGigE' in r.get('switch', '')
+// Ports matching specific region in labels
+{"labels.region": "sjc-zone2-6"}
 ```
 
 ### Important Notes
 
-- **Always use `.get()` with defaults** to handle missing fields: `r.get('field', 0)`
-- **Type safety**: Ensure comparisons match field types (int for numbers, str for names)
-- **Case sensitivity**: Use `.lower()` for case-insensitive string matching
-- **Null safety**: Check for `None` values: `r.get('field') is not None`
+- Use `icontains` for case-insensitive string matching
+- Use `regex` with `(?i)` flag for complex case-insensitive patterns
+- Dot notation (e.g., `labels.region`) traverses nested dicts
+- Missing fields return `None`; comparison operators handle this gracefully
 
 ---
 
@@ -513,7 +442,7 @@ Include **Network Services** with interfaces subtable:
 
 ### Fetch Active Slices
 
-Use `exclude_slice_state` parameter (not a lambda filter):
+Use `exclude_slice_state` parameter:
 
 ```json
 {
@@ -523,7 +452,7 @@ Use `exclude_slice_state` parameter (not a lambda filter):
 
 ### Fetch Slices in Error State
 
-Use `slice_state` parameter (not a lambda filter):
+Use `slice_state` parameter:
 
 ```json
 {
@@ -533,153 +462,80 @@ Use `slice_state` parameter (not a lambda filter):
 
 ### Find High-Memory Hosts
 
-Use lambda filter with sorting and pagination:
-
-```python
-# Lambda filter
-filters = "lambda r: r.get('ram_available', 0) >= 256"
-
-# With sorting (handled by tool parameters, not lambda)
+```json
 {
-  "filters": "lambda r: r.get('ram_available', 0) >= 256",
+  "filters": {"ram_available": {"gte": 256}},
   "sort": {"field": "ram_available", "direction": "desc"},
   "limit": 10
 }
 ```
 
-### Find Hosts with Specific GPUs
+### Find Sites with PTP Capability
 
-```python
-# Any GPU
-filters = "lambda r: any('GPU' in comp for comp in r.get('components', {}).keys())"
-
-# Tesla T4 specifically
-filters = "lambda r: 'GPU-Tesla T4' in r.get('components', {})"
-
-# Available Tesla T4 (not fully allocated)
-filters = "lambda r: r.get('components', {}).get('GPU-Tesla T4', {}).get('capacity', 0) > r.get('components', {}).get('GPU-Tesla T4', {}).get('allocated', 0)"
-```
-
-### Find Hosts with High-Speed NICs
-
-```python
-# ConnectX-6 NICs
-filters = "lambda r: any('ConnectX-6' in comp for comp in r.get('components', {}).keys())"
-
-# SmartNICs
-filters = "lambda r: any('SmartNIC' in comp for comp in r.get('components', {}).keys())"
-```
-
-### Find UCSD Hosts with GPUs and High Resources
-
-```python
-filters = "lambda r: r.get('site') == 'UCSD' and r.get('cores_available', 0) >= 32 and r.get('ram_available', 0) >= 128 and any('GPU' in comp for comp in r.get('components', {}).keys())"
-```
-
-### Find Sites with GPUs
-
-Use lambda filter with component checking:
-
-```python
-# Lambda filter
-filters = "lambda r: 'GPU' in r.get('components', {})"
-
-# Full request
-{
-  "filters": "lambda r: 'GPU' in r.get('components', {})"
-}
-```
-
-### Find Sites at Specific Locations
-
-```python
-# Sites in California (by name pattern)
-filters = "lambda r: r.get('name') in ['UCSD', 'UCY', 'LBNL', 'SRI', 'DALL']"
-
-# Sites with PTP capability
-filters = "lambda r: r.get('ptp_capable') == True"
+```json
+{"filters": {"ptp_capable": true}}
 ```
 
 ### Find Sites with High Availability
 
-```python
-# Sites with ≥64 cores AND ≥256 GB RAM available
-filters = "lambda r: r.get('cores_available', 0) >= 64 and r.get('ram_available', 0) >= 256"
+```json
+{"filters": {"cores_available": {"gte": 64}, "ram_available": {"gte": 256}}}
 ```
 
 ### Find High-Bandwidth Links
 
-```python
-# Links with ≥100 Gbps bandwidth
-filters = "lambda r: r.get('bandwidth', 0) >= 100"
+```json
+{"filters": {"bandwidth": {"gte": 100}}}
 
-# L1 links with ≥80 Gbps
-filters = "lambda r: r.get('layer') == 'L1' and r.get('bandwidth', 0) >= 80"
+// L1 links with ≥80 Gbps
+{"filters": {"layer": "L1", "bandwidth": {"gte": 80}}}
 ```
 
-### Find Links by Port Type
+### Find Links by Switch Name
 
-```python
-# Links with HundredGigE ports
-filters = "lambda r: any('HundredGigE' in ep.get('port', '') for ep in r.get('endpoints', []))"
-
-# Links with TenGigE ports
-filters = "lambda r: any('TenGigE' in ep.get('port', '') for ep in r.get('endpoints', []))"
-```
-
-### Find Links Between Specific Switches
-
-```python
-# Links connecting to UCSD switch
-filters = "lambda r: 'ucsd-data-sw' in r.get('name', '').lower()"
-
-# Links between LOSA and UCSD switches
-filters = "lambda r: 'losa-data-sw' in r.get('name', '').lower() and 'ucsd-data-sw' in r.get('name', '').lower()"
+```json
+{"filters": {"name": {"icontains": "ucsd-data-sw"}}}
 ```
 
 ### Find Facility Ports at Specific Sites
 
-```python
-# Ports at UCSD
-filters = "lambda r: r.get('site') == 'UCSD'"
+```json
+{"filters": {"site": "UCSD"}}
 
-# Cloud facility ports
-filters = "lambda r: r.get('site') in ['GCP', 'AWS', 'AZURE']"
+// Cloud facility ports
+{"filters": {"or": [{"site": "GCP"}, {"site": "AWS"}, {"site": "AZURE"}]}}
 ```
 
 ### Find Facility Ports by Type
 
-```python
-# StarLight ports
-filters = "lambda r: 'StarLight' in r.get('name', '')"
+```json
+// StarLight ports
+{"filters": {"name": {"contains": "StarLight"}}}
 
-# 400G ports
-filters = "lambda r: '400G' in r.get('name', '')"
+// 400G ports
+{"filters": {"name": {"contains": "400G"}}}
 
-# NRP (National Research Platform) ports
-filters = "lambda r: 'NRP' in r.get('name', '')"
+// NRP ports
+{"filters": {"name": {"contains": "NRP"}}}
 ```
 
-### Find Facility Ports with Specific VLANs
+### Pagination Response Format
 
-```python
-# Ports with specific VLAN range
-filters = "lambda r: '3110-3119' in r.get('labels', {}).get('vlan_range', [])"
-
-# Ports with wide VLAN range (multiple ranges available)
-filters = "lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2"
+All query tools return paginated results:
+```json
+{"items": [...], "total": 150, "count": 50, "offset": 0, "has_more": true}
 ```
 
 ---
 
 ## 8. Slice Lifecycle
 
-1. **Create**: `create-slice` with graph model + SSH keys
-2. **Monitor**: `query-slices` to check state progression
-3. **Inspect**: `get-slivers` to see allocated resources
-4. **Modify**: `modify-slice-resources` + `accept-modify` to add/remove resources
-5. **Extend**: `renew-slice` to prevent expiration
-6. **Cleanup**: `delete-slice` to release resources
+1. **Create**: `fabric_build_slice` with declarative specifications
+2. **Monitor**: `fabric_query_slices` to check state progression
+3. **Inspect**: `fabric_get_slivers` to see allocated resources
+4. **Modify**: `fabric_modify_slice` + `fabric_accept_modify` to add/remove resources
+5. **Extend**: `fabric_renew_slice` to prevent expiration
+6. **Cleanup**: `fabric_delete_slice` to release resources
 
 ### Build-Slice Auto-Selection
 
@@ -687,7 +543,7 @@ filters = "lambda r: len(r.get('labels', {}).get('vlan_range', [])) > 2"
 
 ### Build-Slice Network Auto-Detection
 
-The `build-slice` tool auto-detects network type when `type` is omitted:
+The `fabric_build_slice` tool auto-detects network type when `type` is omitted:
 
 | User specifies | Single site | Multi site |
 |:---|:---|:---|
@@ -741,12 +597,12 @@ Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports
 
 **L3 Networks (FABNetv4/FABNetv6):**
 - Orchestrator assigns the subnet automatically
-- Use `get-network-info` to see the assigned subnet and gateway
+- Use `fabric_get_network_info` to see the assigned subnet and gateway
 - Assign IPs from that subnet to your VM interfaces
 
 **L3 Ext Networks (FABNetv4Ext/FABNetv6Ext):**
 - Orchestrator assigns the subnet
-- Must call `make-ip-publicly-routable` to enable external access
+- Must call `fabric_make_ip_routable` to enable external access
 - Configure the **returned** public IP inside your VM
 
 ### FABNetv4Ext vs FABNetv6Ext
@@ -760,15 +616,15 @@ Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports
 
 ### FABNetv4Ext/FABNetv6Ext Public IP Workflow
 
-1. **Create slice** with FABNetv4Ext/FABNetv6Ext network (via `build-slice`)
+1. **Create slice** with FABNetv4Ext/FABNetv6Ext network (via `fabric_build_slice`)
 2. **Wait for slice** to reach `StableOK` state
 3. **Get network info** to see available IPs:
    ```json
-   {"tool": "get-network-info", "params": {"slice_name": "my-slice", "network_name": "net1"}}
+   {"tool": "fabric_get_network_info", "params": {"slice_name": "my-slice", "network_name": "net1"}}
    ```
 4. **Enable public routing** for desired IPs:
    ```json
-   {"tool": "make-ip-publicly-routable", "params": {"slice_name": "my-slice", "network_name": "net1"}}
+   {"tool": "fabric_make_ip_routable", "params": {"slice_name": "my-slice", "network_name": "net1"}}
    ```
    If no IP is specified, the first available IP is used.
 5. **Configure node** with the **returned** `public_ips` value (via SSH)
@@ -777,12 +633,12 @@ Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports
 
 ### Modifying Existing Slices (modify-slice-resources)
 
-Use `modify-slice-resources` to add OR remove nodes, components, or networks from an existing slice. Submits with `wait=False` (non-blocking).
+Use `fabric_modify_slice` to add OR remove nodes, components, or networks from an existing slice. Submits with `wait=False` (non-blocking).
 
 **Add nodes, components, and networks:**
 ```json
 {
-  "tool": "modify-slice-resources",
+  "tool": "fabric_modify_slice",
   "params": {
     "slice_name": "my-slice",
     "add_nodes": [{"name": "node3", "site": "UTAH", "cores": 8}],
@@ -795,7 +651,7 @@ Use `modify-slice-resources` to add OR remove nodes, components, or networks fro
 **Remove nodes, components, and networks:**
 ```json
 {
-  "tool": "modify-slice-resources",
+  "tool": "fabric_modify_slice",
   "params": {
     "slice_name": "my-slice",
     "remove_networks": ["net1"],
@@ -812,7 +668,7 @@ Use `modify-slice-resources` to add OR remove nodes, components, or networks fro
 - New nodes can include components in their specification
 - Components can be added to existing nodes separately
 - Networks can connect any combination of existing and new nodes
-- All NIC/network type auto-selection rules from `build-slice` apply
+- All NIC/network type auto-selection rules from `fabric_build_slice` apply
 - Returns structured result with `added` and `removed` sections
 
 ### Slice States Flow
@@ -831,8 +687,8 @@ To access FABRIC VMs after provisioning:
 
 **Prerequisites:**
 1. **Bastion keys** — Create at https://portal.fabric-testbed.net/experiments#sshKeys
-2. **Slice SSH keys** — Keys specified when creating the slice (via `build-slice`)
-3. **Bastion login** — Get via `get-user-info` tool (e.g., `kthare10_0011904101`)
+2. **Slice SSH keys** — Keys specified when creating the slice (via `fabric_build_slice`)
+3. **Bastion login** — Get via `fabric_get_user_info` tool (e.g., `kthare10_0011904101`)
 
 **SSH Config (~/.ssh/config):**
 ```
@@ -857,7 +713,7 @@ ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_management_ip>
 ```
 
 **Notes:**
-- VM management IP (IPv6) is in `get-slivers` output
+- VM management IP (IPv6) is in `fabric_get_slivers` output
 - Default username is `ubuntu` for Rocky/Ubuntu images
 - The bastion host acts as a jump host for all FABRIC VM access
 
@@ -913,7 +769,7 @@ ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_management_ip>
 
 ### Query Optimization
 
-1. **Use caching**: Topology queries (`query-sites`, `query-hosts`, `query-facility-ports`, `query-links`) are cached
+1. **Use caching**: Topology queries (`fabric_query_sites`, `fabric_query_hosts`, `fabric_query_facility_ports`, `fabric_query_links`) are cached
 2. **Filter server-side**: Apply filters in tool calls rather than post-processing
 3. **Sort on indexed fields**: Prefer sorting by `name`, `site`, `cores_available`
 4. **Paginate large results**: Use `limit` and `offset` for datasets > 50 items
@@ -921,7 +777,7 @@ ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_management_ip>
 ### Slice Management
 
 1. **Always check state**: Before operations, verify slice is in expected state
-2. **Monitor after creation**: Poll `query-slices` until state reaches `StableOK` or `StableError`
+2. **Monitor after creation**: Poll `fabric_query_slices` until state reaches `StableOK` or `StableError`
 3. **Renew before expiration**: Extend lease at least 1 hour before `lease_end_time`
 4. **Clean up failed slices**: Delete slices in `StableError` or `ModifyError` states after debugging
 
@@ -929,7 +785,7 @@ ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_management_ip>
 
 1. **Retry on timeout**: Retry `upstream_timeout` errors with exponential backoff
 2. **Don't retry client errors**: Fix request for `client_error` responses
-3. **Check POA status**: Use `poa-get` to monitor long-running operations
+3. **Check POA status**: Monitor long-running operations
 4. **Validate tokens**: On `unauthorized`, refresh token using credential manager
 
 ---

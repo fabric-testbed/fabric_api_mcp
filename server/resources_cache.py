@@ -104,15 +104,14 @@ class ResourceCache:
         # Initial, non-fatal attempt
         try:
             await self.refresh_once()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.warning("Cache initial refresh failed: %s", e)
 
         while not self._stop_event.is_set():
             try:
                 await self.refresh_once()
-            except Exception:
-                # swallow; next tick will retry
-                pass
+            except Exception as e:
+                self.log.warning("Cache refresh failed: %s", e)
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self._interval)
             except asyncio.TimeoutError:
