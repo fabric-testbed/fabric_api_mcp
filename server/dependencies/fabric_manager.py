@@ -77,7 +77,7 @@ def get_fabric_manager() -> Tuple[FabricManagerV2, str]:
     Raises:
         ValueError: If Authorization header is missing or invalid
     """
-    headers = get_http_headers() or {}
+    headers = get_http_headers(include={"authorization"}) or {}
     token = extract_bearer_token(headers)
     if not token:
         log.warning("Missing Authorization header on protected call")
