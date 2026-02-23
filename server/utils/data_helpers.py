@@ -28,7 +28,16 @@ def _resolve_field(record: Dict[str, Any], field: str) -> Any:
 
 
 def _match_operator(value: Any, op: str, operand: Any) -> bool:
-    """Evaluate a single operator against a value."""
+    """Evaluate a single operator against a value.
+
+    Supported operators: eq, ne, lt, lte, gt, gte, in, contains, icontains,
+    regex, any, all.
+
+    The ``contains`` and ``icontains`` operators are polymorphic:
+      - str: substring match (e.g. "FPGA" in "FPGA-Xilinx-U280")
+      - dict: matches against any key (e.g. components dict keys)
+      - list/tuple/set: matches against stringified elements
+    """
     if op == "eq":
         return value == operand
     if op == "ne":
@@ -44,9 +53,22 @@ def _match_operator(value: Any, op: str, operand: Any) -> bool:
     if op == "in":
         return value in operand
     if op == "contains":
-        return isinstance(value, str) and operand in value
+        if isinstance(value, str):
+            return operand in value
+        if isinstance(value, dict):
+            return any(operand in k for k in value)
+        if isinstance(value, (list, tuple, set)):
+            return any(operand in str(v) for v in value)
+        return False
     if op == "icontains":
-        return isinstance(value, str) and operand.lower() in value.lower()
+        op_lower = operand.lower()
+        if isinstance(value, str):
+            return op_lower in value.lower()
+        if isinstance(value, dict):
+            return any(op_lower in k.lower() for k in value)
+        if isinstance(value, (list, tuple, set)):
+            return any(op_lower in str(v).lower() for v in value)
+        return False
     if op == "regex":
         return isinstance(value, str) and bool(re.search(operand, value))
     if op == "any":
@@ -100,6 +122,9 @@ def apply_filters(
     Supports field-level operators (eq, ne, lt, lte, gt, gte, in, contains,
     icontains, regex, any, all) and logical OR via {"or": [{...}, {...}]}.
 
+    ``contains`` / ``icontains`` work on strings (substring), dicts (key match),
+    and lists (element match).
+
     Examples::
 
         # Cores >= 32
@@ -108,6 +133,9 @@ def apply_filters(
         # Site is UCSD or STAR with >=32 cores
         {"or": [{"site": {"icontains": "UCSD"}}, {"site": {"icontains": "STAR"}}],
          "cores_available": {"gte": 32}}
+
+        # Hosts with an FPGA component (matches dict key "FPGA-Xilinx-U280")
+        {"components": {"contains": "FPGA"}}
 
         # Exact match shorthand
         {"name": "RENC"}

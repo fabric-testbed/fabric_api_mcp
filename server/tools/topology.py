@@ -57,6 +57,8 @@ async def query_sites(
         filters: Declarative JSON filter DSL. Operators: eq, ne, lt, lte, gt, gte,
                  in, contains, icontains, regex, any, all.
                  Logical OR: {"or": [{...}, {...}]}.
+                 contains/icontains work on strings (substring), dicts (key match),
+                 and lists (element match).
                  Example: {"cores_available": {"gte": 64}}
         sort: Sort specification {"field": "cores_available", "direction": "desc"}
         limit: Maximum results to return (default: 200)
@@ -67,6 +69,7 @@ async def query_sites(
         {"name": {"in": ["RENC", "UCSD", "STAR"]}}
         {"or": [{"site": {"icontains": "UCSD"}}, {"site": {"icontains": "STAR"}}],
          "cores_available": {"gte": 32}}
+        {"components": {"contains": "FPGA"}, "cores_available": {"gte": 30}}
 
     Returns:
         Dict with items, total, count, offset, has_more
@@ -111,7 +114,10 @@ async def query_hosts(
 
     Args:
         filters: Declarative JSON filter DSL.
+                 contains/icontains work on strings (substring), dicts (key match),
+                 and lists (element match).
                  Example: {"site": {"eq": "UCSD"}, "cores_available": {"gte": 32}}
+                 Example: {"components": {"contains": "GPU"}, "cores_available": {"gte": 16}}
         sort: Sort specification {"field": "cores_available", "direction": "desc"}
         limit: Maximum results to return (default: 200)
         offset: Number of results to skip (default: 0)
