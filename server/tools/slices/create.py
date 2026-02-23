@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from fabrictestbed_extensions.fablib.fablib_v2 import FablibManagerV2
+from fabrictestbed_extensions.fablib.fablib import FablibManager
 from fastmcp.server.dependencies import get_http_headers
 
 from server.auth.token import extract_bearer_token
@@ -182,7 +182,7 @@ def _select_nic_for_network(net_type: str, bandwidth: Optional[int] = None) -> s
     return "NIC_Basic"
 
 
-def _get_available_sites(fablib: FablibManagerV2, update: bool = True) -> List[Dict[str, Any]]:
+def _get_available_sites(fablib: FablibManager, update: bool = True) -> List[Dict[str, Any]]:
     """
     Get list of available sites with their resource capacities.
 
