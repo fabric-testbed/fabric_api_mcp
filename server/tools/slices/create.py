@@ -646,7 +646,7 @@ async def build_slice(
               Any IP from the subnet can be requested and used.
     """
     # Extract bearer token from request
-    headers = get_http_headers() or {}
+    headers = get_http_headers(include={"authorization"}) or {}
     id_token = extract_bearer_token(headers)
 
     # Normalize list parameters that may be passed as JSON strings
