@@ -443,7 +443,7 @@ async def modify_slice_resources(
         - The slice is submitted with wait=False (non-blocking)
         - Use fabric_query_slices to check slice state after modification
     """
-    headers = get_http_headers() or {}
+    headers = get_http_headers(include={"authorization"}) or {}
     id_token = extract_bearer_token(headers)
 
     if not slice_name and not slice_id:

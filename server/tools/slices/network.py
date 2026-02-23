@@ -200,7 +200,7 @@ async def make_ip_publicly_routable(
           full control over the entire subnet.
     """
     # Extract bearer token from request
-    headers = get_http_headers() or {}
+    headers = get_http_headers(include={"authorization"}) or {}
     id_token = extract_bearer_token(headers)
 
     if not slice_name and not slice_id:
@@ -255,7 +255,7 @@ async def get_network_info(
         - public_ips: List of IPs already marked as publicly routable
     """
     # Extract bearer token from request
-    headers = get_http_headers() or {}
+    headers = get_http_headers(include={"authorization"}) or {}
     id_token = extract_bearer_token(headers)
 
     if not slice_name and not slice_id:
