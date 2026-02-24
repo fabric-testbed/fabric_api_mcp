@@ -57,13 +57,19 @@ L3_TYPE_MAP = {
 def _determine_network_type(
     requested_type: Optional[str],
     sites: set,
+    ero: Optional[List[str]] = None,
 ) -> str:
     """
     Auto-detect the final network type based on user request and topology.
 
+    L2PTP is only used when ERO (Explicit Route Option) is specified for
+    dedicated QoS / bandwidth guarantees. For cross-site L2 without ERO,
+    L2STS is always used.
+
     Args:
         requested_type: The type the user specified (may be None or generic "L2").
         sites: Set of site names for the connected nodes.
+        ero: Explicit Route Option hops. When provided, forces L2PTP.
 
     Returns:
         Resolved network type string.
@@ -72,6 +78,15 @@ def _determine_network_type(
         ValueError: If the combination is invalid.
     """
     single_site = len(sites) <= 1
+
+    # ERO forces L2PTP (dedicated QoS with explicit routing)
+    if ero:
+        if single_site:
+            raise ValueError(
+                "ERO (Explicit Route Option) requires a multi-site (2-site) network. "
+                f"Got sites: {sites}"
+            )
+        return "L2PTP"
 
     if requested_type is None:
         # No type specified: single-site → L2Bridge, multi-site → FABNetv4 (per-node)
@@ -91,6 +106,20 @@ def _determine_network_type(
                 f"Got sites: {sites}"
             )
         return "L2Bridge"
+
+    # L2PTP without ERO → use L2STS instead (L2PTP is only for ERO/dedicated QoS)
+    if requested_type == "L2PTP":
+        if single_site:
+            raise ValueError(
+                "L2PTP requires a multi-site (2-site) network. "
+                f"Got sites: {sites}"
+            )
+        logger.warning(
+            "L2PTP requested without ERO; using L2STS instead. "
+            "L2PTP is only used with ERO for dedicated QoS. "
+            "Specify 'ero' (list of site hops) to use L2PTP."
+        )
+        return "L2STS"
 
     # Explicit types passed through
     if requested_type in VALID_NETWORK_TYPES:
@@ -322,6 +351,7 @@ def _build_and_submit_slice(
             requested_type = net_spec.get("type")
             bandwidth = net_spec.get("bandwidth")
             user_nic_model = net_spec.get("nic") or net_spec.get("nic_model")
+            ero = net_spec.get("ero")  # Explicit Route Option: list of site hops
 
             # Support two formats:
             # 1. Simple: "nodes": ["node1", "node2"] - auto-create NICs
@@ -350,7 +380,8 @@ def _build_and_submit_slice(
             net_sites = {node_map[n].get_site() for n in connected_nodes}
 
             # Resolve the final network type
-            net_type = _determine_network_type(requested_type, net_sites)
+            # L2PTP is only used when ERO is specified for dedicated QoS
+            net_type = _determine_network_type(requested_type, net_sites, ero=ero)
 
             logger.info(
                 f"Adding network {net_name} (requested={requested_type}, "
@@ -436,7 +467,12 @@ def _build_and_submit_slice(
                     type=net_type,
                 )
 
-                # Bandwidth only applies to L2PTP
+                # ERO sets explicit route hops for L2PTP (dedicated QoS)
+                if ero and net_type == "L2PTP":
+                    logger.info(f"Setting ERO route hops for network {net_name}: {ero}")
+                    net_service.set_l2_route_hops(hops=ero)
+
+                # Bandwidth only applies to L2PTP (with ERO)
                 if bandwidth and net_type == "L2PTP":
                     logger.info(f"Setting bandwidth to {bandwidth} Gbps for network {net_name}")
                     net_service.set_bandwidth(bw=bandwidth)
@@ -520,12 +556,17 @@ async def build_slice(
                 * Multi-site, no type → per-site FABNetv4 (see below)
                 * "L2" (generic) → L2Bridge (single-site) or L2STS (multi-site)
               Explicit types:
-                "L2PTP" (point-to-point; requires SmartNIC, auto-added),
-                "L2STS" (site-to-site, multiple interfaces),
+                "L2STS" (site-to-site, default for cross-site L2),
                 "L2Bridge" (local bridge, single site only),
+                "L2PTP" (point-to-point with ERO; requires 'ero' parameter),
                 "FABNetv4", "FABNetv6" (L3 networks),
                 "FABNetv4Ext", "FABNetv6Ext" (externally reachable L3),
                 "IPv4", "IPv6", "IPv4Ext", "IPv6Ext"
+
+              **L2PTP vs L2STS:** L2PTP is only used when ERO (Explicit Route Option)
+              is specified for dedicated QoS and bandwidth guarantees. For cross-site
+              L2 without ERO, L2STS is always used. If L2PTP is requested without
+              ERO, it is automatically converted to L2STS.
 
               **Multi-site FABNet* handling:** When nodes span multiple sites and
               a FABNet* type is used (FABNetv4, FABNetv6, FABNetv4Ext, FABNetv6Ext),
@@ -533,7 +574,11 @@ async def build_slice(
               that site to their site-specific network. Network names are suffixed
               with the site name (e.g., "mynet-UTAH", "mynet-STAR"). This is required
               because FABNet services are site-scoped.
-            - bandwidth (int, optional): Bandwidth in Gbps (L2PTP only).
+            - ero (list, optional): Explicit Route Option - list of intermediate site
+              names (hops) for the L2 path. When specified, forces L2PTP type with
+              dedicated QoS. Requires exactly 2 interfaces across 2 sites.
+              Example: ["STAR", "WASH"] routes traffic through STAR and WASH.
+            - bandwidth (int, optional): Bandwidth in Gbps (L2PTP with ERO only).
               Also determines NIC model selection (if nic not specified):
                 * 100 Gbps → NIC_ConnectX_6
                 * 25 Gbps → NIC_ConnectX_5
@@ -552,7 +597,7 @@ async def build_slice(
         Dict with slice creation status and details.
 
     Example:
-        Create 2 GPU nodes (Utah and DC) connected by 100 Gbps network:
+        Create 2 GPU nodes (Utah and DC) connected by cross-site L2 network:
 
         {
             "name": "my-gpu-slice",
@@ -583,7 +628,19 @@ async def build_slice(
                 {
                     "name": "gpu-net",
                     "nodes": ["node-utah", "node-dc"],
-                    "type": "L2PTP",
+                    "type": "L2STS"
+                }
+            ]
+        }
+
+        With ERO for dedicated QoS (100 Gbps with explicit routing):
+
+        {
+            "networks": [
+                {
+                    "name": "gpu-link",
+                    "nodes": ["node-utah", "node-dc"],
+                    "ero": ["WASH", "STAR"],
                     "bandwidth": 100
                 }
             ]
