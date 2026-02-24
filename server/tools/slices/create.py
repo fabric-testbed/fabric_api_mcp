@@ -24,9 +24,12 @@ logger = logging.getLogger(__name__)
 
 # Valid component models that can be added to nodes
 VALID_GPU_MODELS = ["GPU_TeslaT4", "GPU_RTX6000", "GPU_A40", "GPU_A30"]
-VALID_NIC_MODELS = ["NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6", "NIC_ConnectX_7_100"]
+VALID_NIC_MODELS = [
+    "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6",
+    "NIC_ConnectX_7_100", "NIC_ConnectX_7_400",
+]
 VALID_STORAGE_MODELS = ["NVME_P4510"]
-VALID_FPGA_MODELS = ["FPGA_Xilinx_U280"]
+VALID_FPGA_MODELS = ["FPGA_Xilinx_U280", "FPGA_Xilinx_SN1022"]
 VALID_COMPONENT_MODELS = VALID_GPU_MODELS + VALID_NIC_MODELS + VALID_STORAGE_MODELS + VALID_FPGA_MODELS
 
 # Valid network types
@@ -37,8 +40,11 @@ VALID_L3_NETWORK_TYPES = [
 ]
 VALID_NETWORK_TYPES = VALID_L2_NETWORK_TYPES + VALID_L3_NETWORK_TYPES
 
-# SmartNIC models required for L2PTP
-SMARTNIC_MODELS = ["NIC_ConnectX_5", "NIC_ConnectX_6", "NIC_ConnectX_7_100"]
+# SmartNIC models (dedicated NICs with multiple ports)
+SMARTNIC_MODELS = [
+    "NIC_ConnectX_5", "NIC_ConnectX_6",
+    "NIC_ConnectX_7_100", "NIC_ConnectX_7_400",
+]
 DEFAULT_SMARTNIC = "NIC_ConnectX_6"
 
 # Mapping from user-facing L3 type to the string expected by add_l3network
@@ -139,12 +145,22 @@ def _get_or_create_interface(
     default_nic_model: str,
 ) -> Any:
     """
-    Get or create a NIC interface based on the interface specification.
+    Get or create a network interface based on the interface specification.
+
+    Supports three interface sources:
+    1. NIC interfaces: create or reuse a NIC component (default)
+    2. Component interfaces: use ports from existing components like FPGAs
+    3. Sub-interfaces: create VLAN sub-interfaces on SmartNIC ports
 
     Args:
         node: The node object
         node_nics: Dict tracking NICs per node {node_name: {nic_name: component}}
-        iface_spec: Interface specification with optional nic, port, nic_model
+        iface_spec: Interface specification with optional fields:
+            - nic/nic_name: NIC component name (creates or reuses)
+            - component: Existing component name (e.g., FPGA) to get interfaces from
+            - port: Interface/port index (default: 0)
+            - nic_model/model: NIC model for new NICs
+            - vlan: VLAN ID for sub-interface creation (requires SmartNIC)
         net_name: Network name (used for auto-generated NIC names)
         default_nic_model: Default NIC model if not specified
 
@@ -152,10 +168,47 @@ def _get_or_create_interface(
         The interface object to connect to the network
     """
     node_name = node.get_name()
-    nic_name = iface_spec.get("nic") or iface_spec.get("nic_name")
     port = iface_spec.get("port", 0)  # Default to port 0
+    vlan = iface_spec.get("vlan")  # VLAN for sub-interface
+    component_name = iface_spec.get("component")  # Existing component (e.g., FPGA)
+    nic_name = iface_spec.get("nic") or iface_spec.get("nic_name")
     nic_model = iface_spec.get("nic_model") or iface_spec.get("model") or default_nic_model
 
+    # Case 1: Use an existing component's interface (e.g., FPGA ports)
+    if component_name:
+        try:
+            component = node.get_component(name=component_name)
+        except Exception:
+            # Check if it was added in this session via node_nics tracking
+            if component_name in node_nics.get(node_name, {}):
+                component = node_nics[node_name][component_name]
+            else:
+                raise ValueError(
+                    f"Component '{component_name}' not found on node {node_name}. "
+                    f"Ensure the component is defined in the node's 'components' list."
+                )
+
+        interfaces = component.get_interfaces()
+        if port >= len(interfaces):
+            raise ValueError(
+                f"Port {port} not available on component {component_name} "
+                f"(has {len(interfaces)} ports)."
+            )
+
+        iface = interfaces[port]
+        logger.info(
+            f"Using component {component_name} port {port} on node {node_name}"
+        )
+
+        # Sub-interface on component port
+        if vlan:
+            sub_name = iface_spec.get("sub_name", f"{component_name}-p{port}-vlan{vlan}")
+            logger.info(f"Creating sub-interface {sub_name} (VLAN {vlan}) on {component_name} port {port}")
+            iface = iface.add_sub_interface(name=sub_name, vlan=str(vlan))
+
+        return iface
+
+    # Case 2: NIC interface (create or reuse)
     if nic_name:
         # Check if this NIC was already added in this session
         if nic_name in node_nics.get(node_name, {}):
@@ -183,10 +236,92 @@ def _get_or_create_interface(
     if port >= len(interfaces):
         raise ValueError(
             f"Port {port} not available on NIC {nic_name} (has {len(interfaces)} ports). "
-            f"SmartNICs like NIC_ConnectX_5/6 have 2 ports (0 and 1)."
+            f"SmartNICs like NIC_ConnectX_5/6/7 have 2 ports (0 and 1)."
         )
 
-    return interfaces[port]
+    iface = interfaces[port]
+
+    # Sub-interface: create VLAN sub-interface on the NIC port
+    if vlan:
+        sub_name = iface_spec.get("sub_name", f"{nic_name}-p{port}-vlan{vlan}")
+        logger.info(f"Creating sub-interface {sub_name} (VLAN {vlan}) on {nic_name} port {port}")
+        iface = iface.add_sub_interface(name=sub_name, vlan=str(vlan))
+
+    return iface
+
+
+def _resolve_interface(
+    iface_spec: Dict[str, Any],
+    node_map: Dict[str, Any],
+    node_nics: Dict[str, Dict[str, Any]],
+    switches_map: Dict[str, Any],
+    facility_ports_map: Dict[str, Any],
+    net_name: str,
+    default_nic_model: str,
+) -> Any:
+    """
+    Unified interface resolution that dispatches based on spec type.
+
+    Supports four interface sources:
+    1. Switch interfaces: {"switch": "p4-switch", "port": 0}
+    2. Facility port interfaces: {"facility_port": "Cloud-Facility-STAR"}
+    3. Component interfaces: {"node": "n1", "component": "fpga1", "port": 0}
+    4. NIC interfaces: {"node": "n1", "nic": "nic1", "port": 0} (default)
+
+    Args:
+        iface_spec: Interface specification dict
+        node_map: Dict of node_name -> node object
+        node_nics: Dict tracking NICs per node
+        switches_map: Dict of switch_name -> switch object
+        facility_ports_map: Dict of fp_name -> facility_port object
+        net_name: Network name (for auto-generated NIC names)
+        default_nic_model: Default NIC model if not specified
+
+    Returns:
+        The resolved interface object
+    """
+    if "switch" in iface_spec:
+        switch_name = iface_spec["switch"]
+        if switch_name not in switches_map:
+            raise ValueError(
+                f"Network {net_name} references unknown switch: {switch_name}"
+            )
+        switch = switches_map[switch_name]
+        port = iface_spec.get("port", 0)
+        interfaces = switch.get_interfaces()
+        if port >= len(interfaces):
+            raise ValueError(
+                f"Port {port} not available on switch {switch_name} "
+                f"(has {len(interfaces)} ports)."
+            )
+        logger.info(f"Using switch {switch_name} port {port} for network {net_name}")
+        return interfaces[port]
+
+    if "facility_port" in iface_spec:
+        fp_name = iface_spec["facility_port"]
+        if fp_name not in facility_ports_map:
+            raise ValueError(
+                f"Network {net_name} references unknown facility port: {fp_name}"
+            )
+        fp = facility_ports_map[fp_name]
+        iface = fp.get_interfaces()[0]
+        logger.info(f"Using facility port {fp_name} interface for network {net_name}")
+        return iface
+
+    # Node-based interface (component or NIC)
+    node_name = iface_spec.get("node")
+    if not node_name:
+        raise ValueError(
+            f"Interface spec for network {net_name} must have 'node', 'switch', "
+            f"or 'facility_port' field"
+        )
+    if node_name not in node_map:
+        raise ValueError(f"Network {net_name} references unknown node: {node_name}")
+
+    node = node_map[node_name]
+    return _get_or_create_interface(
+        node, node_nics, iface_spec, net_name, default_nic_model
+    )
 
 
 def _select_nic_for_network(net_type: str, bandwidth: Optional[int] = None) -> str:
@@ -195,13 +330,16 @@ def _select_nic_for_network(net_type: str, bandwidth: Optional[int] = None) -> s
 
     NIC selection rules:
     - L2PTP always requires a SmartNIC (bandwidth determines which one)
+    - 400 Gbps bandwidth → NIC_ConnectX_7_400
     - 100 Gbps bandwidth → NIC_ConnectX_6
     - 25 Gbps bandwidth → NIC_ConnectX_5
     - No bandwidth or other network types → NIC_Basic
     """
     if net_type == "L2PTP":
         # L2PTP requires SmartNIC; pick based on bandwidth
-        if bandwidth and bandwidth >= 100:
+        if bandwidth and bandwidth >= 400:
+            return "NIC_ConnectX_7_400"
+        elif bandwidth and bandwidth >= 100:
             return "NIC_ConnectX_6"
         elif bandwidth and bandwidth >= 25:
             return "NIC_ConnectX_5"
@@ -270,6 +408,9 @@ def _build_and_submit_slice(
     ssh_keys: List[str],
     nodes: List[Dict[str, Any]],
     networks: Optional[List[Dict[str, Any]]] = None,
+    switches: Optional[List[Dict[str, Any]]] = None,
+    facility_ports: Optional[List[Dict[str, Any]]] = None,
+    port_mirrors: Optional[List[Dict[str, Any]]] = None,
     lifetime: Optional[int] = None,
     lease_start_time: Optional[str] = None,
     lease_end_time: Optional[str] = None,
@@ -341,10 +482,44 @@ def _build_and_submit_slice(
             logger.info(f"Adding component {comp_name} ({model}) to node {node_name}")
             node.add_component(model=model, name=comp_name)
 
+        # Add per-node FABNet connectivity if requested
+        fabnet = node_spec.get("fabnet")
+        if fabnet:
+            fabnet_type = "IPv4"  # default
+            if isinstance(fabnet, dict):
+                fabnet_type = fabnet.get("type", "IPv4")
+            elif isinstance(fabnet, str):
+                fabnet_type = fabnet
+            logger.info(f"Adding FABNet ({fabnet_type}) to node {node_name}")
+            node.add_fabnet(net_type=fabnet_type)
+
     # Track NICs added to nodes for reuse (node_name -> {nic_name -> component})
     node_nics: Dict[str, Dict[str, Any]] = {name: {} for name in node_map}
 
-    # Add networks to connect nodes
+    # Add P4 switches
+    switches_map: Dict[str, Any] = {}
+    if switches:
+        for sw_spec in switches:
+            sw_name = sw_spec["name"]
+            sw_site = sw_spec["site"]
+            logger.info(f"Adding P4 switch {sw_name} at site {sw_site}")
+            switch = slice_obj.add_switch(name=sw_name, site=sw_site)
+            switches_map[sw_name] = switch
+
+    # Add facility ports
+    facility_ports_map: Dict[str, Any] = {}
+    if facility_ports:
+        for fp_spec in facility_ports:
+            fp_name = fp_spec["name"]
+            fp_site = fp_spec["site"]
+            fp_vlan = fp_spec["vlan"]
+            logger.info(f"Adding facility port {fp_name} at site {fp_site} (VLAN {fp_vlan})")
+            fp = slice_obj.add_facility_port(
+                name=fp_name, site=fp_site, vlan=str(fp_vlan)
+            )
+            facility_ports_map[fp_name] = fp
+
+    # Add networks to connect nodes/switches/facility_ports
     if networks:
         for net_spec in networks:
             net_name = net_spec["name"]
@@ -355,37 +530,45 @@ def _build_and_submit_slice(
 
             # Support two formats:
             # 1. Simple: "nodes": ["node1", "node2"] - auto-create NICs
-            # 2. Detailed: "interfaces": [{"node": "node1", "nic": "nic1", "port": 0}, ...]
+            # 2. Detailed: "interfaces": [{"node": ..., "switch": ..., "facility_port": ...}, ...]
             connected_nodes = net_spec.get("nodes", [])
             interface_specs = net_spec.get("interfaces", [])
 
             # Convert simple node list to interface specs if needed
             if connected_nodes and not interface_specs:
                 interface_specs = [{"node": n} for n in connected_nodes]
-            elif interface_specs:
-                # Extract node names from interface specs
-                connected_nodes = [ispec.get("node") for ispec in interface_specs]
 
             if len(interface_specs) < 2:
                 raise ValueError(
                     f"Network {net_name} must connect at least 2 nodes/interfaces"
                 )
 
-            # Validate all referenced nodes exist
-            for node_name in connected_nodes:
-                if node_name not in node_map:
-                    raise ValueError(f"Network {net_name} references unknown node: {node_name}")
+            # Collect sites from all interface endpoints for type determination
+            def _get_iface_site(ispec):
+                if "node" in ispec:
+                    if ispec["node"] not in node_map:
+                        raise ValueError(f"Network {net_name} references unknown node: {ispec['node']}")
+                    return node_map[ispec["node"]].get_site()
+                if "switch" in ispec:
+                    if ispec["switch"] not in switches_map:
+                        raise ValueError(f"Network {net_name} references unknown switch: {ispec['switch']}")
+                    return switches_map[ispec["switch"]].get_site()
+                if "facility_port" in ispec:
+                    if ispec["facility_port"] not in facility_ports_map:
+                        raise ValueError(f"Network {net_name} references unknown facility port: {ispec['facility_port']}")
+                    return facility_ports_map[ispec["facility_port"]].get_site()
+                raise ValueError(
+                    f"Interface spec for network {net_name} must have 'node', 'switch', or 'facility_port'"
+                )
 
-            # Collect sites to determine single-site vs multi-site
-            net_sites = {node_map[n].get_site() for n in connected_nodes}
+            net_sites = {_get_iface_site(ispec) for ispec in interface_specs}
 
             # Resolve the final network type
-            # L2PTP is only used when ERO is specified for dedicated QoS
             net_type = _determine_network_type(requested_type, net_sites, ero=ero)
 
             logger.info(
                 f"Adding network {net_name} (requested={requested_type}, "
-                f"resolved={net_type}) connecting nodes: {connected_nodes}"
+                f"resolved={net_type})"
             )
 
             # Select NIC model: user-specified takes precedence, otherwise auto-select
@@ -404,38 +587,31 @@ def _build_and_submit_slice(
             fabnet_types = ["FABNetv4", "FABNetv6", "FABNetv4Ext", "FABNetv6Ext"]
             is_fabnet = net_type in fabnet_types
 
-            # Build a map of interface specs by node name for quick lookup
-            iface_spec_by_node = {ispec.get("node"): ispec for ispec in interface_specs}
-
             # Handle multi-site FABNet* networks: create per-site networks
             if is_fabnet and len(net_sites) > 1:
                 # Group interface specs by site
                 specs_by_site: Dict[str, List[Dict[str, Any]]] = {}
                 for ispec in interface_specs:
-                    node_name = ispec.get("node")
-                    node_site = node_map[node_name].get_site()
-                    if node_site not in specs_by_site:
-                        specs_by_site[node_site] = []
-                    specs_by_site[node_site].append(ispec)
+                    ispec_site = _get_iface_site(ispec)
+                    if ispec_site not in specs_by_site:
+                        specs_by_site[ispec_site] = []
+                    specs_by_site[ispec_site].append(ispec)
 
-                # Create a per-site FABNet network connecting all nodes at that site
                 l3_type = L3_TYPE_MAP[net_type]
                 for site, site_specs in specs_by_site.items():
                     site_net_name = f"{net_name}-{site}"
                     site_interfaces = []
 
                     for ispec in site_specs:
-                        node_name = ispec.get("node")
-                        node = node_map[node_name]
-                        iface = _get_or_create_interface(
-                            node, node_nics, ispec, net_name, nic_model
+                        iface = _resolve_interface(
+                            ispec, node_map, node_nics,
+                            switches_map, facility_ports_map,
+                            net_name, nic_model,
                         )
                         site_interfaces.append(iface)
 
-                    site_node_names = [s.get("node") for s in site_specs]
                     logger.info(
-                        f"Creating per-site {net_type} network {site_net_name} "
-                        f"at site {site} connecting nodes: {site_node_names}"
+                        f"Creating per-site {net_type} network {site_net_name} at site {site}"
                     )
                     slice_obj.add_l3network(
                         name=site_net_name,
@@ -444,13 +620,13 @@ def _build_and_submit_slice(
                     )
                 continue
 
-            # Add NIC interfaces for each interface spec
+            # Resolve interfaces for each interface spec
             interfaces = []
             for ispec in interface_specs:
-                node_name = ispec.get("node")
-                node = node_map[node_name]
-                iface = _get_or_create_interface(
-                    node, node_nics, ispec, net_name, nic_model
+                iface = _resolve_interface(
+                    ispec, node_map, node_nics,
+                    switches_map, facility_ports_map,
+                    net_name, nic_model,
                 )
                 interfaces.append(iface)
 
@@ -477,6 +653,33 @@ def _build_and_submit_slice(
                     logger.info(f"Setting bandwidth to {bandwidth} Gbps for network {net_name}")
                     net_service.set_bandwidth(bw=bandwidth)
 
+    # Add port mirror services (after networks, needs interfaces to exist)
+    if port_mirrors:
+        for pm_spec in port_mirrors:
+            pm_name = pm_spec["name"]
+            mirror_iface_name = pm_spec["mirror_interface_name"]
+            receive_spec = pm_spec["receive_interface"]
+            direction = pm_spec.get("mirror_direction", "both")
+
+            logger.info(
+                f"Adding port mirror {pm_name}: mirror={mirror_iface_name}, "
+                f"direction={direction}"
+            )
+
+            # Resolve the receive interface
+            receive_iface = _resolve_interface(
+                receive_spec, node_map, node_nics,
+                switches_map, facility_ports_map,
+                pm_name, DEFAULT_SMARTNIC,
+            )
+
+            slice_obj.add_port_mirror_service(
+                name=pm_name,
+                mirror_interface_name=mirror_iface_name,
+                receive_interface=receive_iface,
+                mirror_direction=direction,
+            )
+
     # Submit the slice (non-blocking)
     logger.info(f"Submitting slice {name}")
 
@@ -499,7 +702,10 @@ def _build_and_submit_slice(
         "slice_id": slice_id,
         "slice_name": name,
         "nodes": [n["name"] for n in nodes],
+        "switches": [s["name"] for s in switches] if switches else [],
+        "facility_ports": [f["name"] for f in facility_ports] if facility_ports else [],
         "networks": [n["name"] for n in networks] if networks else [],
+        "port_mirrors": [p["name"] for p in port_mirrors] if port_mirrors else [],
     }
 
 
@@ -509,6 +715,9 @@ async def build_slice(
     ssh_keys: Union[str, List[str]],
     nodes: Union[str, List[Dict[str, Any]]],
     networks: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    switches: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    facility_ports: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    port_mirrors: Optional[Union[str, List[Dict[str, Any]]]] = None,
     lifetime: Optional[int] = None,
     lease_start_time: Optional[str] = None,
     lease_end_time: Optional[str] = None,
@@ -535,22 +744,42 @@ async def build_slice(
             - disk (int, optional): Disk in GB (default: 10)
             - image (str, optional): OS image (default: "default_rocky_8")
             - components (list, optional): List of components to add:
-                - model (str): Component model. Valid GPU models:
-                    "GPU_TeslaT4", "GPU_RTX6000", "GPU_A40", "GPU_A30"
-                  Valid NIC models:
-                    "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6"
-                - name (str, optional): Component name
+                - model (str): Component model.
+                  GPUs: "GPU_TeslaT4", "GPU_RTX6000", "GPU_A40", "GPU_A30"
+                  NICs: "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6",
+                        "NIC_ConnectX_7_100" (100G BlueField-3),
+                        "NIC_ConnectX_7_400" (400G BlueField-3)
+                  FPGAs: "FPGA_Xilinx_U280", "FPGA_Xilinx_SN1022"
+                  Storage: "NVME_P4510"
+                - name (str, optional): Component name (used to reference in networks)
+            - fabnet (bool/str/dict, optional): Add per-node FABNet L3 connectivity.
+              Useful for nodes that need external access (e.g., FPGA nodes that need
+              to download tools/artifacts). Creates a site-scoped L3 network with
+              NIC_Basic and sets up routes automatically.
+                * true or "IPv4" → FABNetv4 (default)
+                * "IPv6" → FABNetv6
+                * {"type": "IPv4"} or {"type": "IPv6"} → explicit type
 
         networks: List of network specifications. Each network is a dict with:
             - name (str, required): Network name
             - nodes (list): Simple form - list of node names to connect (auto-creates NICs)
-            - interfaces (list): Detailed form - list of interface specs for SmartNIC control:
-                - node (str, required): Node name
+            - interfaces (list): Detailed form - list of interface specs. Each spec can
+              reference a node, switch, or facility port:
+                Node interface:
+                - node (str): Node name
                 - nic (str, optional): NIC component name (reuse existing or create named)
-                - port (int, optional): Interface/port index (0 or 1 for SmartNICs, default: 0)
-                - nic_model (str, optional): NIC model for this interface
-              Use "interfaces" to connect multiple networks to different ports of the same
-              SmartNIC. Example: one SmartNIC with port 0 → net1, port 1 → net2.
+                - component (str, optional): Existing component name (e.g., FPGA) to
+                  use interfaces from. Mutually exclusive with "nic".
+                - port (int, optional): Interface/port index (default: 0).
+                - vlan (str/int, optional): VLAN ID for sub-interface creation.
+                - nic_model (str, optional): NIC model for new NICs
+                Switch interface:
+                - switch (str): P4 switch name
+                - port (int, optional): Switch port index (default: 0)
+                Facility port interface:
+                - facility_port (str): Facility port name
+              Use "interfaces" to connect nodes, switches, FPGAs, facility ports,
+              or VLAN sub-interfaces to networks.
             - type (str, optional): Network type. Auto-detected if omitted:
                 * Single-site, no type → L2Bridge
                 * Multi-site, no type → per-site FABNetv4 (see below)
@@ -580,12 +809,32 @@ async def build_slice(
               Example: ["STAR", "WASH"] routes traffic through STAR and WASH.
             - bandwidth (int, optional): Bandwidth in Gbps (L2PTP with ERO only).
               Also determines NIC model selection (if nic not specified):
+                * 400 Gbps → NIC_ConnectX_7_400
                 * 100 Gbps → NIC_ConnectX_6
                 * 25 Gbps → NIC_ConnectX_5
                 * No bandwidth or other types → NIC_Basic
             - nic (str, optional): Explicit NIC model to use for this network.
               Overrides automatic selection. Valid models:
-                "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6", "NIC_ConnectX_7_100"
+                "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6",
+                "NIC_ConnectX_7_100", "NIC_ConnectX_7_400"
+
+        switches: List of P4 switch specifications. Each switch is a dict with:
+            - name (str, required): Unique switch name
+            - site (str, required): FABRIC site where the switch is located
+
+        facility_ports: List of facility port specifications. Each is a dict with:
+            - name (str, required): Facility port name (e.g., "Cloud-Facility-STAR")
+            - site (str, required): FABRIC site
+            - vlan (str/int, required): VLAN ID for the facility port interface
+
+        port_mirrors: List of port mirror specifications. Each is a dict with:
+            - name (str, required): Mirror service name
+            - mirror_interface_name (str, required): Raw name of the interface to mirror
+              (the infrastructure interface name string)
+            - receive_interface (dict, required): Interface spec for the receive port.
+              Uses the same format as network interface specs (node+nic or node+component).
+            - mirror_direction (str, optional): "port" (ingress only) or "both"
+              (ingress + egress). Default: "both"
 
         lifetime: Slice lifetime in days (optional).
 
@@ -642,6 +891,66 @@ async def build_slice(
                     "nodes": ["node-utah", "node-dc"],
                     "ero": ["WASH", "STAR"],
                     "bandwidth": 100
+                }
+            ]
+        }
+
+        FPGA nodes connected via L2 network (FPGA-to-FPGA WAN):
+
+        {
+            "name": "fpga-wan-slice",
+            "ssh_keys": ["ssh-rsa AAAA..."],
+            "nodes": [
+                {
+                    "name": "fpga-node-1",
+                    "site": "PSC",
+                    "cores": 8,
+                    "disk": 100,
+                    "image": "docker_ubuntu_20",
+                    "components": [{"model": "FPGA_Xilinx_U280", "name": "fpga1"}],
+                    "fabnet": true
+                },
+                {
+                    "name": "fpga-node-2",
+                    "site": "INDI",
+                    "cores": 8,
+                    "disk": 100,
+                    "image": "docker_ubuntu_20",
+                    "components": [{"model": "FPGA_Xilinx_U280", "name": "fpga1"}],
+                    "fabnet": true
+                }
+            ],
+            "networks": [
+                {
+                    "name": "fpga-link",
+                    "interfaces": [
+                        {"node": "fpga-node-1", "component": "fpga1", "port": 1},
+                        {"node": "fpga-node-2", "component": "fpga1", "port": 0}
+                    ],
+                    "type": "L2STS"
+                }
+            ]
+        }
+
+        Sub-interfaces (multiple VLANs on same SmartNIC port):
+
+        {
+            "networks": [
+                {
+                    "name": "vlan100-net",
+                    "interfaces": [
+                        {"node": "node1", "nic": "smartnic1", "port": 0, "vlan": 100},
+                        {"node": "node2", "nic": "smartnic1", "port": 0, "vlan": 100}
+                    ],
+                    "type": "L2Bridge"
+                },
+                {
+                    "name": "vlan200-net",
+                    "interfaces": [
+                        {"node": "node1", "nic": "smartnic1", "port": 0, "vlan": 200},
+                        {"node": "node2", "nic": "smartnic1", "port": 0, "vlan": 200}
+                    ],
+                    "type": "L2Bridge"
                 }
             ]
         }
@@ -719,13 +1028,19 @@ async def build_slice(
     if not isinstance(nodes, list) or len(nodes) == 0:
         raise ValueError("nodes must be a non-empty list of node specifications")
 
-    # Parse networks if passed as JSON string
-    if networks is not None:
-        if isinstance(networks, str):
+    # Parse JSON string parameters
+    def _parse_json_param(val, param_name):
+        if val is not None and isinstance(val, str):
             try:
-                networks = json.loads(networks)
+                return json.loads(val)
             except json.JSONDecodeError as e:
-                raise ValueError(f"Failed to parse networks JSON: {e}")
+                raise ValueError(f"Failed to parse {param_name} JSON: {e}")
+        return val
+
+    networks = _parse_json_param(networks, "networks")
+    switches = _parse_json_param(switches, "switches")
+    facility_ports = _parse_json_param(facility_ports, "facility_ports")
+    port_mirrors = _parse_json_param(port_mirrors, "port_mirrors")
 
     # Validate node specifications
     for i, node in enumerate(nodes):
@@ -734,6 +1049,40 @@ async def build_slice(
         if "name" not in node:
             raise ValueError(f"Node {i} missing required 'name' field")
         # Note: 'site' is optional - if not provided, a random site will be selected
+
+    # Validate switch specifications
+    if switches:
+        for i, sw in enumerate(switches):
+            if not isinstance(sw, dict):
+                raise ValueError(f"Switch {i} must be a dictionary")
+            if "name" not in sw:
+                raise ValueError(f"Switch {i} missing required 'name' field")
+            if "site" not in sw:
+                raise ValueError(f"Switch {i} missing required 'site' field")
+
+    # Validate facility port specifications
+    if facility_ports:
+        for i, fp in enumerate(facility_ports):
+            if not isinstance(fp, dict):
+                raise ValueError(f"Facility port {i} must be a dictionary")
+            if "name" not in fp:
+                raise ValueError(f"Facility port {i} missing required 'name' field")
+            if "site" not in fp:
+                raise ValueError(f"Facility port {i} missing required 'site' field")
+            if "vlan" not in fp:
+                raise ValueError(f"Facility port {i} missing required 'vlan' field")
+
+    # Validate port mirror specifications
+    if port_mirrors:
+        for i, pm in enumerate(port_mirrors):
+            if not isinstance(pm, dict):
+                raise ValueError(f"Port mirror {i} must be a dictionary")
+            if "name" not in pm:
+                raise ValueError(f"Port mirror {i} missing required 'name' field")
+            if "mirror_interface_name" not in pm:
+                raise ValueError(f"Port mirror {i} missing required 'mirror_interface_name' field")
+            if "receive_interface" not in pm:
+                raise ValueError(f"Port mirror {i} missing required 'receive_interface' field")
 
     # Build and submit the slice
     logger.info(f"Building slice '{name}' with {len(nodes)} nodes")
@@ -744,6 +1093,9 @@ async def build_slice(
         ssh_keys=ssh_keys,
         nodes=nodes,
         networks=networks,
+        switches=switches,
+        facility_ports=facility_ports,
+        port_mirrors=port_mirrors,
         lifetime=lifetime,
         lease_start_time=lease_start_time,
         lease_end_time=lease_end_time,
