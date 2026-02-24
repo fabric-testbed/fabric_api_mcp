@@ -234,6 +234,7 @@ def _modify_slice_resources(
             bandwidth = net_spec.get("bandwidth")
             user_nic_model = net_spec.get("nic") or net_spec.get("nic_model")
             subnet = net_spec.get("subnet")
+            ero = net_spec.get("ero")  # Explicit Route Option: list of site hops
 
             # Support both simple "nodes" and detailed "interfaces" format
             connected_nodes = net_spec.get("nodes", [])
@@ -257,8 +258,8 @@ def _modify_slice_resources(
             # Collect sites
             net_sites = {node_map[n].get_site() for n in connected_nodes}
 
-            # Resolve network type
-            net_type = _determine_network_type(requested_type, net_sites)
+            # Resolve network type (L2PTP only with ERO for dedicated QoS)
+            net_type = _determine_network_type(requested_type, net_sites, ero=ero)
 
             logger.info(
                 f"Adding network {net_name} (type={net_type}) connecting nodes: {connected_nodes}"
@@ -343,6 +344,12 @@ def _modify_slice_resources(
                         type=net_type,
                     )
 
+                # ERO sets explicit route hops for L2PTP (dedicated QoS)
+                if ero and net_type == "L2PTP":
+                    logger.info(f"Setting ERO route hops for network {net_name}: {ero}")
+                    net_service.set_l2_route_hops(hops=ero)
+
+                # Bandwidth only applies to L2PTP (with ERO)
                 if bandwidth and net_type == "L2PTP":
                     logger.info(f"Setting bandwidth to {bandwidth} Gbps")
                     net_service.set_bandwidth(bw=bandwidth)
@@ -417,8 +424,12 @@ async def modify_slice_resources(
                 - nic (str, optional): NIC name (reuse existing or create named)
                 - port (int, optional): Port index (0 or 1 for SmartNICs)
                 - nic_model (str, optional): NIC model for this interface
-            - type (str, optional): Network type (L2PTP, L2Bridge, FABNetv4, etc.)
-            - bandwidth (int, optional): Bandwidth in Gbps (L2PTP only)
+            - type (str, optional): Network type (L2STS, L2Bridge, FABNetv4, etc.)
+              L2PTP is only used with ERO for dedicated QoS. Cross-site L2
+              defaults to L2STS.
+            - ero (list, optional): Explicit Route Option - list of intermediate site
+              hops. Forces L2PTP with dedicated QoS. Example: ["WASH", "STAR"]
+            - bandwidth (int, optional): Bandwidth in Gbps (L2PTP with ERO only)
             - nic (str, optional): Default NIC model override
             - subnet (str, optional): IPv4 subnet for L2 networks (e.g., "192.168.1.0/24")
 
