@@ -7,8 +7,8 @@ set -euo pipefail
 # Prerequisites:
 #   1. A fabric_rc file that exports FABRIC_TOKEN_LOCATION,
 #      FABRIC_ORCHESTRATOR_HOST, FABRIC_CREDMGR_HOST, etc.
-#   2. A Python environment with the server's dependencies installed
-#      (see server/requirements.txt).
+#   2. A Python environment with fabric_api_mcp installed
+#      (pip install . or pip install -e .).
 #
 # Usage (standalone):
 #   source ~/work/fabric_config/fabric_rc
@@ -58,4 +58,4 @@ export FABRIC_LOCAL_MODE=1
 
 # --- Run the MCP server (stdio transport) ---
 cd "$FABRIC_MCP_DIR"
-exec python3 -m server
+exec python3 -m fabric_api_mcp
