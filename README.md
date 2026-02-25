@@ -127,9 +127,58 @@ Server respects these (all optional unless stated):
 
 ---
 
-## Deploy with Docker Compose
+## Deploy with Docker Compose (Server Mode)
 
-Your provided `docker-compose.yml` (works as-is):
+### Step 1: Clone the repository
+
+```bash
+git clone https://github.com/fabric-testbed/fabric-mcp.git
+cd fabric-mcp
+```
+
+### Step 2: Place your TLS certificates
+
+The NGINX reverse proxy terminates TLS and requires a certificate and private key. Update the volume paths in `docker-compose.yml` to point to your actual cert files:
+
+```yaml
+    volumes:
+      - /path/to/your/fullchain.pem:/etc/ssl/public.pem
+      - /path/to/your/privkey.pem:/etc/ssl/private.pem
+```
+
+Or copy/symlink them into the default location:
+
+```bash
+cp /path/to/your/fullchain.pem ssl/fullchain.pem
+cp /path/to/your/privkey.pem ssl/privkey.pem
+```
+
+### Step 3: Start the services
+
+```bash
+docker compose up -d
+```
+
+This starts two containers:
+- **`fabric-prov-mcp`** — the MCP server (port 5000, internal only)
+- **`fabric-prov-nginx`** — NGINX reverse proxy (port 443, public)
+
+### Step 4: Verify
+
+```bash
+# Check containers are running
+docker compose ps
+
+# Check health endpoint
+curl -k https://localhost/healthz
+
+# Check logs
+docker compose logs -f mcp-server
+```
+
+The MCP endpoint is available at `https://<your-host>/mcp`.
+
+### docker-compose.yml
 
 ```yaml
 services:
@@ -161,8 +210,8 @@ services:
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./ssl/fullchain.pem:/etc/ssl/public.pem
-      - ./ssl/privkey.pem:/etc/ssl/private.pem
+      - ./ssl/fullchain.pem:/etc/ssl/public.pem    # ← update path to your cert
+      - ./ssl/privkey.pem:/etc/ssl/private.pem      # ← update path to your key
       - ./nginx-logs:/var/log/nginx
     restart: always
 
@@ -214,7 +263,7 @@ server {
 
 ## Adding new tools
 
-- Add your tool function to an existing module under `fabric_api_mcp/tools/` (or create a new one) and include it in that module’s `TOOLS` list.
+- Add your tool function to an existing module under `fabric_api_mcp/tools/` (or create a new one) and include it in that module's `TOOLS` list.
 - If you add a new module, import it in `fabric_api_mcp/tools/__init__.py` and append its `TOOLS` to `ALL_TOOLS`.
 - `__main__.py` auto-registers everything in `ALL_TOOLS`, so no extra wiring is needed after export.
 
