@@ -35,9 +35,14 @@ class ServerConfig:
     cache_max_fetch: int
     max_fetch_for_sort: int
 
+    # Local mode settings
+    local_mode: bool
+    transport: str
+
     @classmethod
     def from_env(cls) -> "ServerConfig":
         """Load configuration from environment variables with sensible defaults."""
+        is_local = os.environ.get("FABRIC_LOCAL_MODE", "0") not in ("0", "false", "False", "")
         return cls(
             # FABRIC service endpoints - can be overridden for different deployments
             orchestrator_host=os.environ.get("FABRIC_ORCHESTRATOR_HOST", "orchestrator.fabric-testbed.net"),
@@ -59,10 +64,16 @@ class ServerConfig:
             refresh_interval_seconds=int(os.environ.get("REFRESH_INTERVAL_SECONDS", "300")),  # 5 minutes
             cache_max_fetch=int(os.environ.get("CACHE_MAX_FETCH", "5000")),
             max_fetch_for_sort=int(os.environ.get("MAX_FETCH_FOR_SORT", "5000")),
+
+            # Local mode settings
+            local_mode=is_local,
+            transport=os.environ.get("FABRIC_MCP_TRANSPORT", "stdio" if is_local else "http"),
         )
 
     def print_startup_info(self) -> None:
         """Print configuration on startup for debugging/verification."""
+        print(f"Local mode: {self.local_mode}")
+        print(f"Transport: {self.transport}")
         print(f"Orchestrator HOST: {self.orchestrator_host}")
         print(f"Credmgr HOST: {self.credmgr_host}")
         print(f"Artifact Manager HOST: {self.am_host}")
