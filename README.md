@@ -222,223 +222,263 @@ server {
 
 ---
 
-## Local run (no Docker)
-
-Requires Python 3.11+ (tested with 3.13 and 3.14).
-
-### Install as a Python package
-
-The recommended way to install — works for both server and local mode:
-
-```bash
-# From the repo root
-pip install .
-
-# Or install in development mode
-pip install -e .
-
-# Or install directly from GitHub
-pip install git+https://github.com/fabric-testbed/fabric-mcp.git
-```
-
-This installs a `fabric-mcp` console command you can use anywhere:
-
-```bash
-# HTTP server mode
-fabric-mcp
-
-# Local/stdio mode
-FABRIC_LOCAL_MODE=1 fabric-mcp
-```
-
-You can also run as a module:
-
-```bash
-python -m fabric_api_mcp
-```
-
-### HTTP mode (server deployment)
-
-```bash
-cd fabric_api_mcp
-pip install .
-LOG_LEVEL=DEBUG PORT=5000 fabric-mcp
-```
-
-Then put your reverse proxy in front (or hit it directly if exposed).
-
-### Local / stdio mode (for Claude Desktop, VS Code, claude CLI)
+## Local setup (no Docker)
 
 Local mode lets you run the MCP server on your machine using your FABRIC token file and environment — no Bearer header or remote server required. The server reads credentials from your `fabric_rc` file.
 
-**Setup (one-time):**
+### Step 1: Create a Python virtual environment
+
+Requires Python 3.11+ (tested with 3.13 and 3.14).
 
 ```bash
-# Option A: Install into any Python environment
-pip install git+https://github.com/fabric-testbed/fabric-mcp.git
+python3 -m venv ~/fabric-mcp-venv
+source ~/fabric-mcp-venv/bin/activate
+```
 
-# Option B: Clone and install in development mode
-git clone <repo-url> fabric_api_mcp
-cd fabric_api_mcp
+You can place the venv anywhere — just remember the path for later steps.
+
+### Step 2: Install the package
+
+```bash
+pip install git+https://github.com/fabric-testbed/fabric-mcp.git
+```
+
+Or clone and install in development mode:
+
+```bash
+git clone https://github.com/fabric-testbed/fabric-mcp.git
+cd fabric-mcp
 pip install -e .
 ```
 
-**Run directly:**
+### Step 3: Set up the FABRIC config directory
+
+Create a directory for your FABRIC credentials (if you don't already have one):
 
 ```bash
-source ~/work/fabric_config/fabric_rc
-FABRIC_LOCAL_MODE=1 fabric-mcp
+mkdir -p ~/work/fabric_config
 ```
 
-**Run via the helper script:**
+This directory should contain:
+- **`fabric_rc`** — environment file that exports FABRIC variables (token location, SSH key paths, etc.)
+- **`tokens.json`** — your FABRIC token file (downloaded from the [FABRIC Portal → Experiments → Manage Tokens](https://portal.fabric-testbed.net/experiments#manageTokens))
+- **SSH keys** — bastion key, slice key, and slice key `.pub` (see [Portal → Experiments → SSH Keys](https://portal.fabric-testbed.net/experiments#sshKeys))
+
+A minimal `fabric_rc` looks like:
 
 ```bash
-./scripts/fabric-api-local.sh
+export FABRIC_CREDMGR_HOST=cm.fabric-testbed.net
+export FABRIC_ORCHESTRATOR_HOST=orchestrator.fabric-testbed.net
+export FABRIC_CORE_API_HOST=uis.fabric-testbed.net
+
+export FABRIC_PROJECT_ID=<your-project-uuid>
+export FABRIC_TOKEN_LOCATION=~/work/fabric_config/tokens.json
+
+export FABRIC_BASTION_HOST=bastion.fabric-testbed.net
+export FABRIC_BASTION_USERNAME=<your_bastion_username>
+
+export FABRIC_BASTION_KEY_LOCATION=~/work/fabric_config/fabric_bastion_key
+export FABRIC_SLICE_PRIVATE_KEY_FILE=~/work/fabric_config/slice_key
+export FABRIC_SLICE_PUBLIC_KEY_FILE=~/work/fabric_config/slice_key.pub
+
+export FABRIC_LOG_FILE=~/fablib.log
+export FABRIC_LOG_LEVEL=INFO
+
+export FABRIC_SSH_COMMAND_LINE="ssh -i {{ _self_.private_ssh_key_file }} -F ~/work/fabric_config/ssh_config {{ _self_.username }}@{{ _self_.management_ip }}"
 ```
 
-The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_MODE=1`. Override defaults with env vars:
+Replace `<your-project-uuid>` and `<your_bastion_username>` with your actual values from the FABRIC portal.
+
+### Step 4: Get the helper scripts
+
+If you cloned the repo (Step 2, Option B), the scripts are already at `scripts/fabric-api-local.sh` and `scripts/fabric-api.sh`.
+
+Otherwise, download them:
+
+```bash
+curl -o ~/fabric-api-local.sh \
+  https://raw.githubusercontent.com/fabric-testbed/fabric-mcp/main/scripts/fabric-api-local.sh
+curl -o ~/fabric-api.sh \
+  https://raw.githubusercontent.com/fabric-testbed/fabric-mcp/main/scripts/fabric-api.sh
+chmod +x ~/fabric-api-local.sh ~/fabric-api.sh
+```
+
+| Script | Mode | Transport | Auth |
+|--------|------|-----------|------|
+| `fabric-api-local.sh` | Local | stdio | Token from `fabric_rc` (automatic) |
+| `fabric-api.sh` | Remote | stdio (via `mcp-remote`) → Docker Compose-deployed server | Bearer token from JSON file |
+
+### Step 5: Configure the scripts for your environment
+
+**`fabric-api-local.sh`** — update these if your paths differ from the defaults:
 
 | Var | Default | Purpose |
 |-----|---------|---------|
+| `FABRIC_VENV` | `$FABRIC_MCP_DIR/.venv` | Path to your Python venv |
 | `FABRIC_RC` | `~/work/fabric_config/fabric_rc` | Path to your `fabric_rc` file |
-| `FABRIC_MCP_DIR` | auto-detected from script location | Path to this repo checkout |
-| `FABRIC_VENV` | `$FABRIC_MCP_DIR/.venv` | Path to Python venv |
+| `FABRIC_MCP_DIR` | auto-detected from script location | Path to the repo checkout |
 
-#### Local mode env vars
+Edit the script directly, or pass as env vars:
+
+```bash
+# Edit the script — change the FABRIC_VENV default:
+#   FABRIC_VENV="${FABRIC_VENV:-$FABRIC_MCP_DIR/.venv}"
+# to:
+#   FABRIC_VENV="${FABRIC_VENV:-$HOME/fabric-mcp-venv}"
+```
+
+**`fabric-api.sh`** — update these if your paths differ from the defaults:
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `FABRIC_LOCAL_MODE` | `0` | Set to `1` to enable local mode |
-| `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport selection |
-| `FABRIC_RC` | `~/work/fabric_config/fabric_rc` | Path to fabric_rc config file |
-| `FABRIC_TOKEN_LOCATION` | *(from fabric_rc)* | Path to token JSON file |
+| `FABRIC_TOKEN_JSON` | `~/work/claude/id_token.json` | Path to JSON file containing `{"id_token": "..."}` |
+| `FABRIC_MCP_URL` | `https://alpha-5.fabric-testbed.net/mcp` | URL of the remote MCP server |
+
+The remote script requires `jq` and `npx` (`mcp-remote`) to be installed:
+
+```bash
+# macOS
+brew install jq node
+
+# Linux
+sudo apt install jq nodejs npm
+```
+
+### Step 6: Test the setup
+
+**Local mode:**
+
+```bash
+~/fabric-api-local.sh
+# or if using cloned repo:
+FABRIC_VENV=~/fabric-mcp-venv ./scripts/fabric-api-local.sh
+```
+
+You should see the MCP server start in stdio mode. Press `Ctrl+C` to stop.
+
+**Remote mode:**
+
+```bash
+~/fabric-api.sh
+# or if using cloned repo:
+./scripts/fabric-api.sh
+```
+
+The script reads your token and connects to the remote MCP server via `mcp-remote`.
 
 ---
 
 ## Using from MCP clients
 
-### Remote server mode
+> **Note:** In all examples below, replace `/path/to/scripts/` with the actual path to your script
+> (e.g., `~/fabric-api-local.sh` if downloaded, or `/path/to/fabric-mcp/scripts/fabric-api-local.sh` if cloned).
 
-#### VS Code (`.mcp.json`)
+### Claude Code CLI
 
-```json
-{
-	"servers": {
-        "fabric-api": {
-          "command": "/path/to/fabric_api_mcp/scripts/fabric-api.sh"
-        }
-	}
-}
-```
+Add the MCP server to `~/.claude/settings.json` (global) or `.claude/settings.json` (per-project).
 
-#### Claude Desktop (mcp-remote to hosted server)
+**Local mode (recommended for full functionality):**
 
 ```json
 {
   "mcpServers": {
     "fabric-api": {
-      "command": "/path/to/fabric_api_mcp/scripts/fabric-api.sh"
+      "command": "/path/to/scripts/fabric-api-local.sh"
     }
   }
 }
 ```
 
-### Local mode (stdio)
-
-#### Claude Desktop (`claude_desktop_config.json`)
-
-**Option A — Use the helper script:**
+**Remote mode (connects to Docker Compose-deployed server):**
 
 ```json
 {
   "mcpServers": {
     "fabric-api": {
-      "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
+      "command": "/path/to/scripts/fabric-api.sh"
     }
   }
 }
 ```
 
-**Option B — pip-installed (`fabric-mcp` on PATH):**
+You can also add via the CLI:
+
+```bash
+# Local mode
+claude mcp add fabric-api /path/to/scripts/fabric-api-local.sh
+
+# Remote mode
+claude mcp add fabric-api /path/to/scripts/fabric-api.sh
+```
+
+### Claude Desktop
+
+Edit `claude_desktop_config.json` (Settings → Developer → Edit Config).
+
+**Local mode:**
 
 ```json
 {
   "mcpServers": {
     "fabric-api": {
-      "command": "bash",
-      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 fabric-mcp"]
+      "command": "/path/to/scripts/fabric-api-local.sh"
     }
   }
 }
 ```
 
-**Option C — Inline with python (no pip install):**
+**Remote mode:**
 
 ```json
 {
   "mcpServers": {
     "fabric-api": {
-      "command": "bash",
-      "args": ["-c", "source ~/work/fabric_config/fabric_rc && source .venv/bin/activate && FABRIC_LOCAL_MODE=1 python3 -m fabric_api_mcp"],
-      "cwd": "/path/to/fabric_api_mcp"
+      "command": "/path/to/scripts/fabric-api.sh"
     }
   }
 }
 ```
 
-#### Claude CLI (`~/.claude.json` or `settings.json`)
+### VS Code
 
-```json
-{
-  "mcpServers": {
-    "fabric-api": {
-      "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
-    }
-  }
-}
-```
+Add to `.mcp.json` in your project root (or workspace settings).
 
-Or if pip-installed:
-
-```json
-{
-  "mcpServers": {
-    "fabric-api": {
-      "command": "bash",
-      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 fabric-mcp"]
-    }
-  }
-}
-```
-
-#### VS Code (`.mcp.json` — local stdio)
+**Local mode:**
 
 ```json
 {
   "servers": {
     "fabric-api": {
       "type": "stdio",
-      "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
+      "command": "/path/to/scripts/fabric-api-local.sh"
     }
   }
 }
 ```
 
-Or if pip-installed:
+**Remote mode:**
 
 ```json
 {
   "servers": {
     "fabric-api": {
       "type": "stdio",
-      "command": "bash",
-      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 fabric-mcp"]
+      "command": "/path/to/scripts/fabric-api.sh"
     }
   }
 }
 ```
 
-> You can point `prompt` at `fabric_api_mcp/system.md` to enforce your system prompt.
+### Local vs Remote — which to use?
+
+| | Local mode | Remote mode |
+|---|-----------|-------------|
+| **Script** | `fabric-api-local.sh` | `fabric-api.sh` |
+| **Auth** | Automatic from `fabric_rc` | Bearer token via `id_token.json` |
+| **Transport** | stdio (direct) | stdio via `mcp-remote` → HTTPS (Docker Compose server) |
+| **Post-boot config** | Supported (SSH access to VMs) | Not available |
+| **Dependencies** | Python venv + `fabric_api_mcp` | `jq` + `npx mcp-remote` |
+| **Best for** | Full-featured local development | Lightweight remote access |
 
 ---
 
