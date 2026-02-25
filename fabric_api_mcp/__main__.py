@@ -45,7 +45,7 @@ from fabric_api_mcp.tools.topology import query_sites, query_hosts, query_facili
 from fabric_api_mcp.tools.slices.listing import query_slices, get_slivers
 from fabric_api_mcp.tools.slices.create import build_slice
 from fabric_api_mcp.tools.slices.modify import modify_slice_resources, accept_modify
-from fabric_api_mcp.tools.slices.lifecycle import renew_slice, delete_slice
+from fabric_api_mcp.tools.slices.lifecycle import renew_slice, delete_slice, post_boot_config
 from fabric_api_mcp.tools.slices.network import make_ip_publicly_routable, get_network_info
 from fabric_api_mcp.tools.slices.inspect import list_nodes, list_networks, list_interfaces
 from fabric_api_mcp.tools.projects import (
@@ -179,6 +179,11 @@ TOOL_REGISTRY = [
         "fn": delete_slice,
         "name": "fabric_delete_slice",
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    },
+    {
+        "fn": post_boot_config,
+        "name": "fabric_post_boot_config",
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     },
     # Slice inspection (read-only, idempotent)
     {
