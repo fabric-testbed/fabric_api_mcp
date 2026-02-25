@@ -85,6 +85,9 @@ FABRIC Provisioning MCP Server (FastMCP + FastAPI)
 │  │  └─ slices/             # slice tools split by concern
 │  ├─ requirements.txt
 │  └─ Dockerfile
+├─ scripts/
+│  ├─ fabric-api.sh          # remote mode launcher (mcp-remote + Bearer token)
+│  └─ fabric-api-local.sh    # local/stdio mode launcher
 ├─ nginx/
 │  ├─ nginx.conf
 │  └─ default.conf           # reverse proxy to mcp-server
@@ -116,6 +119,8 @@ Server respects these (all optional unless stated):
 | `REFRESH_INTERVAL_SECONDS` | `300` | ResourceCache refresh interval |
 | `CACHE_MAX_FETCH` | `5000` | Cache fetch limit per cycle |
 | `MAX_FETCH_FOR_SORT` | `5000` | Max fetch when client asks to sort |
+| `FABRIC_LOCAL_MODE` | `0` | `1` to enable local/stdio mode (no Bearer token required) |
+| `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport (`stdio` or `http`) |
 
 > The `system.md` file is served to clients via an MCP prompt named **`fabric-system`**.
 
@@ -220,22 +225,72 @@ server {
 
 Requires Python 3.13+ (compatible with 3.14).
 
+### HTTP mode (server deployment)
+
 ```bash
-cd server
+cd fabric_api_mcp
 python3 -m venv .venv
 source .venv/bin/activate
 pip install uv
-uv pip install -r requirements.txt
-LOG_LEVEL=DEBUG PORT=5000 python __main__.py
+uv pip install -r server/requirements.txt
+LOG_LEVEL=DEBUG PORT=5000 python -m server
 ```
 
 Then put your reverse proxy in front (or hit it directly if exposed).
+
+### Local / stdio mode (for Claude Desktop, VS Code, claude CLI)
+
+Local mode lets you run the MCP server on your machine using your FABRIC token file and environment — no Bearer header or remote server required. The server reads credentials from environment variables set by your `fabric_rc` file.
+
+**Setup (one-time):**
+
+```bash
+# Clone and install dependencies
+git clone <repo-url> fabric_api_mcp
+cd fabric_api_mcp
+python3 -m venv .venv
+source .venv/bin/activate
+pip install uv
+uv pip install -r server/requirements.txt
+```
+
+**Run directly:**
+
+```bash
+source ~/work/fabric_config/fabric_rc
+export FABRIC_LOCAL_MODE=1
+python -m server
+```
+
+**Run via the helper script:**
+
+```bash
+./scripts/fabric-api-local.sh
+```
+
+The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_MODE=1`. Override defaults with env vars:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `FABRIC_RC` | `~/work/fabric_config/fabric_rc` | Path to your `fabric_rc` file |
+| `FABRIC_MCP_DIR` | auto-detected from script location | Path to this repo checkout |
+| `FABRIC_VENV` | `$FABRIC_MCP_DIR/.venv` | Path to Python venv |
+
+#### Local mode env vars
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `FABRIC_LOCAL_MODE` | `0` | Set to `1` to enable local mode |
+| `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport selection |
+| `FABRIC_TOKEN_LOCATION` | *(from fabric_rc)* | Path to token JSON file |
 
 ---
 
 ## Using from MCP clients
 
-### VS Code (`.mcp.json`)
+### Remote server mode
+
+#### VS Code (`.mcp.json`)
 
 ```json
 {
@@ -245,31 +300,101 @@ Then put your reverse proxy in front (or hit it directly if exposed).
 			"url": "https://alpha-5.fabric-testbed.net/mcp",
 			"headers": {
 				"Authorization": "Bearer ${input:fabric-token}"
-			},
+			}
 		}
 	},
 	"inputs": [
-		    {
-      "type": "promptString",
-      "id": "fabric-token",
-      "description": "Enter your FABRIC token",
-      "password": true
-    }
-    ]
+		{
+			"type": "promptString",
+			"id": "fabric-token",
+			"description": "Enter your FABRIC token",
+			"password": true
+		}
+	]
 }
 ```
 
-### Claude Desktop (mcp-remote)
+#### Claude Desktop (mcp-remote to hosted server)
 
 ```json
 {
   "mcpServers": {
     "fabric-api": {
       "command": "npx",
-      "args": ["mcp-remote", "https://alpha-5.fabric-testbed/mcp",
+      "args": ["mcp-remote", "https://alpha-5.fabric-testbed.net/mcp",
         "--header", "Authorization: Bearer ${FABRIC_ID_TOKEN}"
       ],
       "env": { "FABRIC_ID_TOKEN": "" }
+    }
+  }
+}
+```
+
+### Local mode (stdio)
+
+#### Claude Desktop (`claude_desktop_config.json`)
+
+**Option A — Use the helper script:**
+
+```json
+{
+  "mcpServers": {
+    "fabric-api": {
+      "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
+    }
+  }
+}
+```
+
+**Option B — Inline command:**
+
+```json
+{
+  "mcpServers": {
+    "fabric-api": {
+      "command": "bash",
+      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 python3 -m server"],
+      "cwd": "/path/to/fabric_api_mcp"
+    }
+  }
+}
+```
+
+#### Claude CLI (`~/.claude.json` or `settings.json`)
+
+```json
+{
+  "mcpServers": {
+    "fabric-api": {
+      "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
+    }
+  }
+}
+```
+
+#### VS Code (`.mcp.json` — local stdio)
+
+```json
+{
+  "servers": {
+    "fabric-api": {
+      "type": "stdio",
+      "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
+    }
+  }
+}
+```
+
+Or if you installed into a dedicated Python environment:
+
+```json
+{
+  "servers": {
+    "fabric-api": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 python3 -m server"],
+      "cwd": "/path/to/fabric_api_mcp"
     }
   }
 }

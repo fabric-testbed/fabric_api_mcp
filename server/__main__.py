@@ -15,6 +15,8 @@ Key Features:
 """
 from __future__ import annotations
 
+import asyncio
+import atexit
 import logging
 import os
 from pathlib import Path
@@ -65,13 +67,12 @@ mcp = FastMCP(
 )
 
 # ---------------------------------------
-# Register Middleware & Error Handlers
+# Register Middleware & Error Handlers (HTTP only)
 # ---------------------------------------
-register_middleware(mcp)
-
-# Register error handlers with the FastAPI app
-if hasattr(mcp, "app") and mcp.app:
-    register_error_handlers(mcp.app)
+if config.transport == "http":
+    register_middleware(mcp)
+    if hasattr(mcp, "app") and mcp.app:
+        register_error_handlers(mcp.app)
 
 # ---------------------------------------
 # Background Resource Cache
@@ -107,10 +108,11 @@ async def _on_shutdown():
     await CACHE.stop()
 
 
-# Wire up lifecycle handlers
-if hasattr(mcp, "app") and mcp.app:
-    mcp.app.add_event_handler("startup", _on_startup)
-    mcp.app.add_event_handler("shutdown", _on_shutdown)
+# Wire up lifecycle handlers (HTTP uses ASGI events; stdio uses manual start/atexit)
+if config.transport == "http":
+    if hasattr(mcp, "app") and mcp.app:
+        mcp.app.add_event_handler("startup", _on_startup)
+        mcp.app.add_event_handler("shutdown", _on_shutdown)
 
 # ---------------------------------------
 # Tool Registry with Names & Annotations
@@ -269,9 +271,21 @@ def fabric_system_prompt():
 # Server Entry Point
 # ---------------------------------------
 if __name__ == "__main__":
-    # Configure server from environment
-    if config.uvicorn_access_log:
-        os.environ.setdefault("UVICORN_ACCESS_LOG", "true")
-    log.info("Starting FABRIC MCP (FastMCP) on http://%s:%s", config.host, config.port)
-    # Run the MCP server with HTTP transport
-    mcp.run(transport="http", host=config.host, port=config.port)
+    if config.transport == "stdio":
+        # Local mode: start cache manually and register cleanup via atexit
+        log.info("Starting FABRIC MCP (FastMCP) in local/stdio mode")
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(_on_startup())
+
+        def _cleanup():
+            loop.run_until_complete(_on_shutdown())
+            loop.close()
+
+        atexit.register(_cleanup)
+        mcp.run(transport="stdio")
+    else:
+        # Server mode: HTTP transport with ASGI lifecycle
+        if config.uvicorn_access_log:
+            os.environ.setdefault("UVICORN_ACCESS_LOG", "true")
+        log.info("Starting FABRIC MCP (FastMCP) on http://%s:%s", config.host, config.port)
+        mcp.run(transport="http", host=config.host, port=config.port)

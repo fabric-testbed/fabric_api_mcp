@@ -406,7 +406,7 @@ def _build_and_submit_slice(
     id_token: str,
     name: str,
     ssh_keys: List[str],
-    nodes: List[Dict[str, Any]],
+    nodes: Optional[List[Dict[str, Any]]] = None,
     networks: Optional[List[Dict[str, Any]]] = None,
     switches: Optional[List[Dict[str, Any]]] = None,
     facility_ports: Optional[List[Dict[str, Any]]] = None,
@@ -421,6 +421,9 @@ def _build_and_submit_slice(
     This function runs synchronously and should be called via call_threadsafe.
     """
     fablib = create_fablib_manager(id_token)
+
+    # Default to empty list if no nodes provided
+    nodes = nodes or []
 
     # Create a new slice
     logger.info(f"Creating new slice: {name}")
@@ -713,7 +716,7 @@ def _build_and_submit_slice(
 async def build_slice(
     name: str,
     ssh_keys: Union[str, List[str]],
-    nodes: Union[str, List[Dict[str, Any]]],
+    nodes: Optional[Union[str, List[Dict[str, Any]]]] = None,
     networks: Optional[Union[str, List[Dict[str, Any]]]] = None,
     switches: Optional[Union[str, List[Dict[str, Any]]]] = None,
     facility_ports: Optional[Union[str, List[Dict[str, Any]]]] = None,
@@ -734,7 +737,8 @@ async def build_slice(
 
         ssh_keys: SSH public keys for slice access. Can be a list or JSON string.
 
-        nodes: List of node specifications. Each node is a dict with:
+        nodes: List of node specifications (optional). Required when creating VMs.
+            Omit for facility-port-only or switch-only slices. Each node is a dict with:
             - name (str, required): Unique node name
             - site (str, optional): FABRIC site (e.g., "UTAH", "STAR", "UCSD", "WASH").
               If omitted, a random site with sufficient resources is auto-selected.
@@ -1018,15 +1022,15 @@ async def build_slice(
     # Normalize list parameters that may be passed as JSON strings
     ssh_keys = normalize_list_param(ssh_keys, "ssh_keys") or []
 
-    # Parse nodes if passed as JSON string
-    if isinstance(nodes, str):
-        try:
-            nodes = json.loads(nodes)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse nodes JSON: {e}")
-
-    if not isinstance(nodes, list) or len(nodes) == 0:
-        raise ValueError("nodes must be a non-empty list of node specifications")
+    # Parse nodes if passed as JSON string, default to empty list if omitted
+    if nodes is not None:
+        if isinstance(nodes, str):
+            try:
+                nodes = json.loads(nodes)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Failed to parse nodes JSON: {e}")
+    else:
+        nodes = []
 
     # Parse JSON string parameters
     def _parse_json_param(val, param_name):
@@ -1043,6 +1047,8 @@ async def build_slice(
     port_mirrors = _parse_json_param(port_mirrors, "port_mirrors")
 
     # Validate node specifications
+    if not isinstance(nodes, list):
+        raise ValueError("nodes must be a list of node specifications")
     for i, node in enumerate(nodes):
         if not isinstance(node, dict):
             raise ValueError(f"Node {i} must be a dictionary, got {type(node)}")
