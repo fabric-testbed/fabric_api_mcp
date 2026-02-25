@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def _make_ip_publicly_routable(
-    id_token: str,
     slice_name: Optional[str] = None,
+    id_token: Optional[str] = None,
     slice_id: Optional[str] = None,
     network_name: Optional[str] = None,
     ipv4: Optional[List[str]] = None,
@@ -104,8 +104,8 @@ def _make_ip_publicly_routable(
 
 
 def _get_network_info(
-    id_token: str,
     slice_name: Optional[str] = None,
+    id_token: Optional[str] = None,
     slice_id: Optional[str] = None,
     network_name: Optional[str] = None,
 ) -> Dict[str, Any]:

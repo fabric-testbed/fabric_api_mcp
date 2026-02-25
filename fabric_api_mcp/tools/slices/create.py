@@ -14,6 +14,7 @@ from fabrictestbed_extensions.fablib.fablib import FablibManager
 from fastmcp.server.dependencies import get_http_headers
 
 from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
 from fabric_api_mcp.log_helper.decorators import tool_logger
 from fabric_api_mcp.utils.async_helpers import call_threadsafe
@@ -403,9 +404,9 @@ def _select_site_for_node(
 
 
 def _build_and_submit_slice(
-    id_token: str,
     name: str,
     ssh_keys: List[str],
+    id_token: Optional[str] = None,
     nodes: Optional[List[Dict[str, Any]]] = None,
     networks: Optional[List[Dict[str, Any]]] = None,
     switches: Optional[List[Dict[str, Any]]] = None,
@@ -522,6 +523,12 @@ def _build_and_submit_slice(
             )
             facility_ports_map[fp_name] = fp
 
+    # In local mode, default interface mode to "auto" so post_boot_config
+    # will automatically allocate and configure IPs. Users can override per
+    # interface via "mode" in the interface spec. In server mode we do not
+    # set mode (no SSH access for post_boot_config).
+    set_iface_mode = config.local_mode
+
     # Add networks to connect nodes/switches/facility_ports
     if networks:
         for net_spec in networks:
@@ -611,6 +618,9 @@ def _build_and_submit_slice(
                             switches_map, facility_ports_map,
                             net_name, nic_model,
                         )
+                        if set_iface_mode:
+                            mode = ispec.get("mode", "auto")
+                            iface.set_mode(mode)
                         site_interfaces.append(iface)
 
                     logger.info(
@@ -631,6 +641,9 @@ def _build_and_submit_slice(
                     switches_map, facility_ports_map,
                     net_name, nic_model,
                 )
+                if set_iface_mode:
+                    mode = ispec.get("mode", "auto")
+                    iface.set_mode(mode)
                 interfaces.append(iface)
 
             # Create L3 or L2 network
@@ -715,7 +728,7 @@ def _build_and_submit_slice(
 @tool_logger("fabric_build_slice")
 async def build_slice(
     name: str,
-    ssh_keys: Union[str, List[str]],
+    ssh_keys: Optional[Union[str, List[str]]] = None,
     nodes: Optional[Union[str, List[Dict[str, Any]]]] = None,
     networks: Optional[Union[str, List[Dict[str, Any]]]] = None,
     switches: Optional[Union[str, List[Dict[str, Any]]]] = None,
@@ -736,6 +749,8 @@ async def build_slice(
         name: Name of the slice to create.
 
         ssh_keys: SSH public keys for slice access. Can be a list or JSON string.
+                  In local mode, if omitted, the public key is automatically read
+                  from the file at FABRIC_SLICE_PUBLIC_KEY_FILE (set in fabric_rc).
 
         nodes: List of node specifications (optional). Required when creating VMs.
             Omit for facility-port-only or switch-only slices. Each node is a dict with:
@@ -777,6 +792,10 @@ async def build_slice(
                 - port (int, optional): Interface/port index (default: 0).
                 - vlan (str/int, optional): VLAN ID for sub-interface creation.
                 - nic_model (str, optional): NIC model for new NICs
+                - mode (str, optional): Interface configuration mode (local mode only).
+                  Defaults to "auto". Values: "auto" (auto-allocate IP from network),
+                  "config" (use pre-assigned IP), "manual" (no auto-config).
+                  Ignored in server mode.
                 Switch interface:
                 - switch (str): P4 switch name
                 - port (int, optional): Switch port index (default: 0)
@@ -1021,6 +1040,12 @@ async def build_slice(
 
     # Normalize list parameters that may be passed as JSON strings
     ssh_keys = normalize_list_param(ssh_keys, "ssh_keys") or []
+
+    # In local mode, ssh_keys can be empty — FablibManager reads the public key
+    # from FABRIC_SLICE_PUBLIC_KEY_FILE (set in fabric_rc) automatically.
+    # In server mode, ssh_keys are required.
+    if not ssh_keys and not config.local_mode:
+        raise ValueError("ssh_keys are required in server mode. Provide at least one SSH public key.")
 
     # Parse nodes if passed as JSON string, default to empty list if omitted
     if nodes is not None:

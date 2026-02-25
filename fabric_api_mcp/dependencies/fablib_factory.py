@@ -25,6 +25,9 @@ def create_fablib_manager(id_token: str = None) -> FablibManager:
             log_path=True,
         )
 
+    if not id_token:
+        raise ValueError("Authentication Required: Missing or invalid Authorization Bearer token.")
+
     return FablibManager(
         id_token=id_token,
         credmgr_host=config.credmgr_host,

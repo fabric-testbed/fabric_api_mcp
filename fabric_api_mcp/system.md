@@ -10,7 +10,9 @@ Prioritize correctness, token safety, and deterministic output.
 
 ## 0. Authentication & Security
 
-- Every tool call **MUST** include `Authorization: Bearer <id_token>` in HTTP headers
+- **Server mode**: Every tool call **MUST** include `Authorization: Bearer <id_token>` in HTTP headers.
+- **Local mode**: Token and SSH keys are read automatically from `fabric_rc`
+  (`FABRIC_TOKEN_LOCATION`, `FABRIC_SLICE_PUBLIC_KEY_FILE`). No Bearer header needed.
 - **NEVER** print tokens in responses; redact as `***`
 - **Authentication failure response:**
   ```json
@@ -51,6 +53,7 @@ Prioritize correctness, token safety, and deterministic output.
 | `fabric_accept_modify` | Accept pending slice modifications |
 | `fabric_renew_slice` | Extend slice lease time |
 | `fabric_delete_slice` | Delete slice and release resources |
+| `fabric_post_boot_config` | Run post-boot configuration on VMs (**local mode only**) |
 | `fabric_get_network_info` | Get network details (available IPs, public IPs, gateway, subnet) |
 | `fabric_make_ip_routable` | Enable external access for FABNetv4Ext/FABNetv6Ext IPs |
 
@@ -567,10 +570,11 @@ All query tools return paginated results:
 
 1. **Create**: `fabric_build_slice` with declarative specifications
 2. **Monitor**: `fabric_query_slices` to check state progression
-3. **Inspect**: `fabric_get_slivers` to see allocated resources
-4. **Modify**: `fabric_modify_slice` + `fabric_accept_modify` to add/remove resources
-5. **Extend**: `fabric_renew_slice` to prevent expiration
-6. **Cleanup**: `fabric_delete_slice` to release resources
+3. **Configure** (local mode): `fabric_post_boot_config` to set up networking inside VMs
+4. **Inspect**: `fabric_get_slivers` to see allocated resources
+5. **Modify**: `fabric_modify_slice` + `fabric_accept_modify` to add/remove resources
+6. **Extend**: `fabric_renew_slice` to prevent expiration
+7. **Cleanup**: `fabric_delete_slice` to release resources
 
 ### Build-Slice Auto-Selection
 
@@ -612,6 +616,8 @@ Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports
 ```
 - `nic`: NIC component name (reuses existing or creates new)
 - `port`: Interface index (0 or 1 for SmartNICs like NIC_ConnectX_5/6 which have 2 ports)
+- `mode`: Interface configuration mode (**local mode only**, ignored in server mode).
+  Default `"auto"`. Values: `"auto"`, `"config"`, `"manual"`. See Interface Modes section.
 
 **Bandwidth:** Only applies to `L2PTP` networks.
 
@@ -624,6 +630,32 @@ Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports
 | **L2** (L2PTP, L2STS, L2Bridge) | User chooses any subnet | User assigns IPs manually to VM interfaces |
 | **L3** (FABNetv4, FABNetv6) | Orchestrator assigns subnet | User assigns IPs from orchestrator's subnet |
 | **L3 Ext** (FABNetv4Ext, FABNetv6Ext) | Orchestrator assigns subnet | User requests public IPs via `make-ip-publicly-routable` |
+
+### Network Configuration After Slice Creation
+
+There are two ways to configure networking inside VMs after a slice reaches `StableOK`:
+
+**Option 1 — Automatic (local mode):** Call `fabric_post_boot_config` — it SSHes into VMs
+and configures all interfaces, IPs, and routes automatically based on interface mode
+(default `"auto"`). See the Post-Boot Configuration section.
+
+**Option 2 — Manual (any mode):** SSH into VMs and configure interfaces using `ip addr`
+commands. Use `fabric_list_interfaces` to find the device name (`dev`) and
+`fabric_get_network_info` to find the subnet/gateway for L3 networks.
+
+```bash
+# L2 network — pick any subnet
+sudo ip addr add 192.168.1.1/24 dev ens7
+sudo ip link set dev ens7 up
+
+# L3 network (FABNetv4) — use orchestrator-assigned subnet
+# First call fabric_get_network_info to get subnet and gateway
+sudo ip addr add <ip_from_subnet>/24 dev ens7
+sudo ip link set dev ens7 up
+sudo ip route add <subnet> via <gateway> dev ens7
+```
+
+Users can always configure networking manually, even in local mode.
 
 **L2 Networks:**
 - Full control over IP addressing
@@ -662,7 +694,7 @@ Use `interfaces` instead of `nodes` for fine-grained control over SmartNIC ports
    {"tool": "fabric_make_ip_routable", "params": {"slice_name": "my-slice", "network_name": "net1"}}
    ```
    If no IP is specified, the first available IP is used.
-5. **Configure node** with the **returned** `public_ips` value (via SSH)
+5. **Configure node** with the **returned** `public_ips` value (via SSH or `fabric_post_boot_config`)
 
 **Important for FABNetv4Ext:** The requested IP may already be in use by another slice. The orchestrator returns the actual assigned IP in `public_ips`. Always configure the **returned** IP inside your VM, not the requested one.
 
@@ -751,6 +783,72 @@ ssh -i /path/to/slice_key -F /path/to/ssh_config ubuntu@<vm_management_ip>
 - VM management IP (IPv6) is in `fabric_get_slivers` output
 - Default username is `ubuntu` for Rocky/Ubuntu images
 - The bastion host acts as a jump host for all FABRIC VM access
+- In **local mode**, `fabric_list_nodes` returns the real SSH command from `fabric_rc` config.
+  In **server mode**, it returns a template with placeholder paths.
+
+### Interface Modes (Local Mode Only)
+
+In **local mode**, interfaces are set to `"auto"` mode by default when creating or modifying
+slices. This allows `fabric_post_boot_config` to automatically allocate and configure IP
+addresses. In **server mode**, no mode is set (no SSH access for post-boot configuration).
+
+| Mode | IP Allocation | Configuration | Use Case |
+|:-----|:-------------|:-------------|:---------|
+| `"auto"` | Auto-allocate from network subnet | Configures IP, brings interface up, sets routes | Default for local mode. Best for L3 networks. |
+| `"config"` | User pre-assigns via `set_ip_addr()` | Configures pre-assigned IP, brings interface up | When you need a specific IP address |
+| `"manual"` | None | Only brings link up (`ip link set dev <iface> up`) | Custom configuration scripts, advanced scenarios |
+
+**Override per interface** using the `mode` field in interface specs:
+```json
+{
+  "name": "my-net",
+  "interfaces": [
+    {"node": "node1", "mode": "auto"},
+    {"node": "node2", "mode": "manual"}
+  ],
+  "type": "FABNetv4"
+}
+```
+
+### Post-Boot Configuration (Local Mode Only)
+
+The `fabric_post_boot_config` tool runs post-boot configuration on a slice after it
+reaches `StableOK` state. It requires SSH access to VMs and is **only available in local mode**.
+
+Since `fabric_build_slice` and `fabric_modify_slice` submit with `wait=False` (non-blocking),
+post-boot configuration must be called separately once the slice is active.
+
+**Parameters:**
+- `slice_name` or `slice_id`: Identify the slice
+- `node_names` (list, optional): Specific nodes to configure. If omitted, configures the
+  entire slice (all nodes, networks, interfaces).
+
+**What it does (entire slice):**
+1. Configures L3 network metadata (subnet, gateway, allocated IPs)
+2. Configures VLAN interfaces
+3. Sets hostnames on all nodes
+4. Configures IP addresses on dataplane interfaces based on interface mode
+5. Sets up routes for L3 networks
+6. Runs post-boot tasks (commands, file uploads)
+
+**What it does (specific nodes):**
+Runs `node.config()` on each named node only — sets hostname, configures that node's
+interfaces and routes.
+
+**Examples:**
+```json
+// Configure entire slice
+{"slice_name": "my-slice"}
+
+// Configure specific nodes only
+{"slice_name": "my-slice", "node_names": ["node1", "node2"]}
+```
+
+**Typical local mode workflow:**
+1. `fabric_build_slice` → submits slice (non-blocking)
+2. Poll `fabric_query_slices` until state is `StableOK`
+3. `fabric_post_boot_config` → configures networking inside VMs
+4. `fabric_list_nodes` → get SSH commands to access VMs
 
 ---
 

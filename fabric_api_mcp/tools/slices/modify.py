@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastmcp.server.dependencies import get_http_headers
 
 from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fabric_manager import get_fabric_manager
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
 from fabric_api_mcp.log_helper.decorators import tool_logger
@@ -37,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 def _modify_slice_resources(
-    id_token: str,
     slice_name: Optional[str] = None,
+    id_token: Optional[str] = None,
     slice_id: Optional[str] = None,
     # Add operations
     add_nodes: Optional[List[Dict[str, Any]]] = None,
@@ -319,6 +320,10 @@ def _modify_slice_resources(
     # Track NICs for reuse
     node_nics: Dict[str, Dict[str, Any]] = {name: {} for name in node_map}
 
+    # In local mode, default interface mode to "auto"; users can override
+    # per interface via "mode" in the interface spec. Server mode: no mode set.
+    set_iface_mode = config.local_mode
+
     # Add networks
     if add_networks:
         for net_spec in add_networks:
@@ -393,7 +398,9 @@ def _modify_slice_resources(
                             switches_map, facility_ports_map,
                             net_name, nic_model,
                         )
-                        iface.set_mode('auto')
+                        if set_iface_mode:
+                            mode = ispec.get("mode", "auto")
+                            iface.set_mode(mode)
                         site_interfaces.append(iface)
 
                     logger.info(f"Creating per-site {net_type} network {site_net_name} at {site}")
@@ -413,7 +420,9 @@ def _modify_slice_resources(
                     switches_map, facility_ports_map,
                     net_name, nic_model,
                 )
-                iface.set_mode('auto')
+                if set_iface_mode:
+                    mode = ispec.get("mode", "auto")
+                    iface.set_mode(mode)
                 interfaces.append(iface)
 
             # Create network
