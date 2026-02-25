@@ -73,15 +73,21 @@ class ServerConfig:
         )
 
     def print_startup_info(self) -> None:
-        """Print configuration on startup for debugging/verification."""
-        print(f"Local mode: {self.local_mode}")
-        print(f"Transport: {self.transport}")
+        """Print configuration on startup for debugging/verification.
+
+        Uses stderr so that stdio transport (which reserves stdout for
+        JSON-RPC messages) is not corrupted.
+        """
+        import sys
+        _p = lambda msg: print(msg, file=sys.stderr)
+        _p(f"Local mode: {self.local_mode}")
+        _p(f"Transport: {self.transport}")
         if self.local_mode:
-            print(f"Fabric RC: {self.fabric_rc}")
-        print(f"Orchestrator HOST: {self.orchestrator_host}")
-        print(f"Credmgr HOST: {self.credmgr_host}")
-        print(f"Artifact Manager HOST: {self.am_host}")
-        print(f"Core API HOST: {self.core_api_host}")
+            _p(f"Fabric RC: {self.fabric_rc}")
+        _p(f"Orchestrator HOST: {self.orchestrator_host}")
+        _p(f"Credmgr HOST: {self.credmgr_host}")
+        _p(f"Artifact Manager HOST: {self.am_host}")
+        _p(f"Core API HOST: {self.core_api_host}")
 
 
 # Global configuration instance
