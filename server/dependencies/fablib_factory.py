@@ -17,6 +17,7 @@ def create_fablib_manager(id_token: str = None) -> FablibManager:
     """
     if config.local_mode:
         return FablibManager(
+            fabric_rc=config.fabric_rc,
             auto_token_refresh=True,
             validate_config=False,
             no_ssh=False,

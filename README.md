@@ -295,22 +295,10 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 ```json
 {
 	"servers": {
-		"fabric-api": {
-			"type": "http",
-			"url": "https://alpha-5.fabric-testbed.net/mcp",
-			"headers": {
-				"Authorization": "Bearer ${input:fabric-token}"
-			}
-		}
-	},
-	"inputs": [
-		{
-			"type": "promptString",
-			"id": "fabric-token",
-			"description": "Enter your FABRIC token",
-			"password": true
-		}
-	]
+        "fabric-api": {
+          "command": "/path/to/fabric_api_mcp/scripts/fabric-api.sh"
+        }
+	}
 }
 ```
 
@@ -320,11 +308,7 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 {
   "mcpServers": {
     "fabric-api": {
-      "command": "npx",
-      "args": ["mcp-remote", "https://alpha-5.fabric-testbed.net/mcp",
-        "--header", "Authorization: Bearer ${FABRIC_ID_TOKEN}"
-      ],
-      "env": { "FABRIC_ID_TOKEN": "" }
+      "command": "/path/to/fabric_api_mcp/scripts/fabric-api.sh"
     }
   }
 }
@@ -340,21 +324,8 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 {
   "mcpServers": {
     "fabric-api": {
+      "type": "stdio",
       "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
-    }
-  }
-}
-```
-
-**Option B — Inline command:**
-
-```json
-{
-  "mcpServers": {
-    "fabric-api": {
-      "command": "bash",
-      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 python3 -m server"],
-      "cwd": "/path/to/fabric_api_mcp"
     }
   }
 }
@@ -366,6 +337,7 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 {
   "mcpServers": {
     "fabric-api": {
+      "type": "stdio",
       "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
     }
   }
@@ -380,21 +352,6 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
     "fabric-api": {
       "type": "stdio",
       "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
-    }
-  }
-}
-```
-
-Or if you installed into a dedicated Python environment:
-
-```json
-{
-  "servers": {
-    "fabric-api": {
-      "type": "stdio",
-      "command": "bash",
-      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 python3 -m server"],
-      "cwd": "/path/to/fabric_api_mcp"
     }
   }
 }
