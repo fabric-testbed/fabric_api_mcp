@@ -38,6 +38,7 @@ class ServerConfig:
     # Local mode settings
     local_mode: bool
     transport: str
+    fabric_rc: str
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -68,12 +69,15 @@ class ServerConfig:
             # Local mode settings
             local_mode=is_local,
             transport=os.environ.get("FABRIC_MCP_TRANSPORT", "stdio" if is_local else "http"),
+            fabric_rc=os.environ.get("FABRIC_RC", os.path.expanduser("~/work/fabric_config/fabric_rc")),
         )
 
     def print_startup_info(self) -> None:
         """Print configuration on startup for debugging/verification."""
         print(f"Local mode: {self.local_mode}")
         print(f"Transport: {self.transport}")
+        if self.local_mode:
+            print(f"Fabric RC: {self.fabric_rc}")
         print(f"Orchestrator HOST: {self.orchestrator_host}")
         print(f"Credmgr HOST: {self.credmgr_host}")
         print(f"Artifact Manager HOST: {self.am_host}")
