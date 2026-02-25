@@ -2,7 +2,7 @@ services:
   mcp-server:
     build:
       # Set the build context to the subdirectory containing the Dockerfile and code
-      context: server/
+      context: .
       dockerfile: Dockerfile
     container_name: fabric-api-mcp
     image: fabric-api-mcp:latest

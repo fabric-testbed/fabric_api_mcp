@@ -76,15 +76,16 @@ FABRIC Provisioning MCP Server (FastMCP + FastAPI)
 ```
 
 .
-├─ server/
-│  ├─ __main__.py            # FastMCP entrypoint (`python -m server`)
+├─ fabric_api_mcp/
+│  ├─ __main__.py            # FastMCP entrypoint (`python -m fabric_api_mcp`)
 │  ├─ resources_cache.py     # background cache
 │  ├─ system.md              # system prompt served via @mcp.prompt("fabric-system")
-│  ├─ tools/
-│  │  ├─ topology.py         # topology query tools
-│  │  └─ slices/             # slice tools split by concern
-│  ├─ requirements.txt
-│  └─ Dockerfile
+│  └─ tools/
+│     ├─ topology.py         # topology query tools
+│     └─ slices/             # slice tools split by concern
+├─ pyproject.toml             # pip-installable package config
+├─ requirements.txt
+├─ Dockerfile
 ├─ scripts/
 │  ├─ fabric-api.sh          # remote mode launcher (mcp-remote + Bearer token)
 │  └─ fabric-api-local.sh    # local/stdio mode launcher
@@ -134,7 +135,7 @@ Your provided `docker-compose.yml` (works as-is):
 services:
   mcp-server:
     build:
-      context: server/
+      context: fabric_api_mcp/
       dockerfile: Dockerfile
     container_name: fabric-prov-mcp
     image: fabric-prov-mcp:latest
@@ -213,8 +214,8 @@ server {
 
 ## Adding new tools
 
-- Add your tool function to an existing module under `server/tools/` (or create a new one) and include it in that module’s `TOOLS` list.
-- If you add a new module, import it in `server/tools/__init__.py` and append its `TOOLS` to `ALL_TOOLS`.
+- Add your tool function to an existing module under `fabric_api_mcp/tools/` (or create a new one) and include it in that module’s `TOOLS` list.
+- If you add a new module, import it in `fabric_api_mcp/tools/__init__.py` and append its `TOOLS` to `ALL_TOOLS`.
 - `__main__.py` auto-registers everything in `ALL_TOOLS`, so no extra wiring is needed after export.
 
 > The MCP server runs on port **5000** in the container (`mcp.run(transport="http", host=0.0.0.0, port=5000)`).
@@ -223,43 +224,70 @@ server {
 
 ## Local run (no Docker)
 
-Requires Python 3.13+ (compatible with 3.14).
+Requires Python 3.11+ (tested with 3.13 and 3.14).
+
+### Install as a Python package
+
+The recommended way to install — works for both server and local mode:
+
+```bash
+# From the repo root
+pip install .
+
+# Or install in development mode
+pip install -e .
+
+# Or install directly from GitHub
+pip install git+https://github.com/fabric-testbed/fabric-mcp.git
+```
+
+This installs a `fabric-mcp` console command you can use anywhere:
+
+```bash
+# HTTP server mode
+fabric-mcp
+
+# Local/stdio mode
+FABRIC_LOCAL_MODE=1 fabric-mcp
+```
+
+You can also run as a module:
+
+```bash
+python -m fabric_api_mcp
+```
 
 ### HTTP mode (server deployment)
 
 ```bash
 cd fabric_api_mcp
-python3 -m venv .venv
-source .venv/bin/activate
-pip install uv
-uv pip install -r server/requirements.txt
-LOG_LEVEL=DEBUG PORT=5000 python -m server
+pip install .
+LOG_LEVEL=DEBUG PORT=5000 fabric-mcp
 ```
 
 Then put your reverse proxy in front (or hit it directly if exposed).
 
 ### Local / stdio mode (for Claude Desktop, VS Code, claude CLI)
 
-Local mode lets you run the MCP server on your machine using your FABRIC token file and environment — no Bearer header or remote server required. The server reads credentials from environment variables set by your `fabric_rc` file.
+Local mode lets you run the MCP server on your machine using your FABRIC token file and environment — no Bearer header or remote server required. The server reads credentials from your `fabric_rc` file.
 
 **Setup (one-time):**
 
 ```bash
-# Clone and install dependencies
+# Option A: Install into any Python environment
+pip install git+https://github.com/fabric-testbed/fabric-mcp.git
+
+# Option B: Clone and install in development mode
 git clone <repo-url> fabric_api_mcp
 cd fabric_api_mcp
-python3 -m venv .venv
-source .venv/bin/activate
-pip install uv
-uv pip install -r server/requirements.txt
+pip install -e .
 ```
 
 **Run directly:**
 
 ```bash
 source ~/work/fabric_config/fabric_rc
-export FABRIC_LOCAL_MODE=1
-python -m server
+FABRIC_LOCAL_MODE=1 fabric-mcp
 ```
 
 **Run via the helper script:**
@@ -282,6 +310,7 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 |-----|---------|---------|
 | `FABRIC_LOCAL_MODE` | `0` | Set to `1` to enable local mode |
 | `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport selection |
+| `FABRIC_RC` | `~/work/fabric_config/fabric_rc` | Path to fabric_rc config file |
 | `FABRIC_TOKEN_LOCATION` | *(from fabric_rc)* | Path to token JSON file |
 
 ---
@@ -324,8 +353,34 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 {
   "mcpServers": {
     "fabric-api": {
-      "type": "stdio",
       "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
+    }
+  }
+}
+```
+
+**Option B — pip-installed (`fabric-mcp` on PATH):**
+
+```json
+{
+  "mcpServers": {
+    "fabric-api": {
+      "command": "bash",
+      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 fabric-mcp"]
+    }
+  }
+}
+```
+
+**Option C — Inline with python (no pip install):**
+
+```json
+{
+  "mcpServers": {
+    "fabric-api": {
+      "command": "bash",
+      "args": ["-c", "source ~/work/fabric_config/fabric_rc && source .venv/bin/activate && FABRIC_LOCAL_MODE=1 python3 -m fabric_api_mcp"],
+      "cwd": "/path/to/fabric_api_mcp"
     }
   }
 }
@@ -337,8 +392,20 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 {
   "mcpServers": {
     "fabric-api": {
-      "type": "stdio",
       "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
+    }
+  }
+}
+```
+
+Or if pip-installed:
+
+```json
+{
+  "mcpServers": {
+    "fabric-api": {
+      "command": "bash",
+      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 fabric-mcp"]
     }
   }
 }
@@ -357,7 +424,21 @@ The script auto-sources `fabric_rc`, activates `.venv`, and sets `FABRIC_LOCAL_M
 }
 ```
 
-> You can point `prompt` at `server/system.md` to enforce your system prompt.
+Or if pip-installed:
+
+```json
+{
+  "servers": {
+    "fabric-api": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["-c", "source ~/work/fabric_config/fabric_rc && FABRIC_LOCAL_MODE=1 fabric-mcp"]
+    }
+  }
+}
+```
+
+> You can point `prompt` at `fabric_api_mcp/system.md` to enforce your system prompt.
 
 ---
 
@@ -486,7 +567,7 @@ The VM's management IP (IPv6) is available from `get-slivers` output.
 
 ## System prompt
 
-Your `server/system.md` is exposed to clients via:
+Your `fabric_api_mcp/system.md` is exposed to clients via:
 
 ```python
 @mcp.prompt(name="fabric-system")
