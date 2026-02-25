@@ -4,37 +4,25 @@ set -euo pipefail
 # ---------------------------------------------------------------
 # fabric-api-local.sh — Run FABRIC MCP server in local/stdio mode
 #
-# Prerequisites:
-#   1. A fabric_rc file that exports FABRIC_TOKEN_LOCATION,
-#      FABRIC_ORCHESTRATOR_HOST, FABRIC_CREDMGR_HOST, etc.
-#   2. A Python environment with fabric_api_mcp installed
-#      (pip install . or pip install -e .).
+# Runs the MCP server locally, reading credentials from fabric_rc.
+# Supports all tools including post-boot VM configuration via SSH.
 #
-# Usage (standalone):
-#   source ~/work/fabric_config/fabric_rc
-#   ./scripts/fabric-api-local.sh
-#
-# Usage (Claude Desktop — claude_desktop_config.json):
-#   {
-#     "mcpServers": {
-#       "fabric-api": {
-#         "command": "/path/to/fabric_api_mcp/scripts/fabric-api-local.sh"
-#       }
-#     }
-#   }
-#
-# Override defaults with env vars:
-#   FABRIC_RC        — path to fabric_rc (default: ~/work/fabric_config/fabric_rc)
-#   FABRIC_MCP_DIR   — path to fabric_api_mcp checkout (auto-detected from script location)
-#   FABRIC_VENV      — path to Python venv (default: $FABRIC_MCP_DIR/.venv)
+# Prerequisite: pip install fabric_api_mcp into your venv
 # ---------------------------------------------------------------
 
-# --- Resolve project directory ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FABRIC_MCP_DIR="${FABRIC_MCP_DIR:-$(dirname "$SCRIPT_DIR")}"
+# ===================== USER CONFIGURATION =====================
+# Update these defaults to match your environment, or override
+# at runtime via env vars (e.g., FABRIC_RC=~/my/fabric_rc ./fabric-api-local.sh)
+
+# Path to your fabric_rc file
+FABRIC_RC="${FABRIC_RC:-$HOME/work/fabric_config/fabric_rc}"
+
+# Path to your Python virtual environment (with fabric_api_mcp installed)
+FABRIC_VENV="${FABRIC_VENV:-$HOME/fabric-mcp-venv}"
+
+# ==============================================================
 
 # --- Source fabric_rc if not already sourced ---
-FABRIC_RC="${FABRIC_RC:-$HOME/work/fabric_config/fabric_rc}"
 if [[ -z "${FABRIC_TOKEN_LOCATION:-}" ]]; then
   if [[ -f "$FABRIC_RC" ]]; then
     # shellcheck source=/dev/null
@@ -46,16 +34,16 @@ if [[ -z "${FABRIC_TOKEN_LOCATION:-}" ]]; then
   fi
 fi
 
-# --- Activate venv if present ---
-FABRIC_VENV="${FABRIC_VENV:-$FABRIC_MCP_DIR/.venv}"
+# --- Activate venv ---
 if [[ -d "$FABRIC_VENV" ]]; then
   # shellcheck source=/dev/null
   source "$FABRIC_VENV/bin/activate"
+else
+  echo "[!] Python venv not found at $FABRIC_VENV" >&2
+  echo "    Set FABRIC_VENV to the path of your virtual environment." >&2
+  exit 1
 fi
 
-# --- Enable local mode ---
+# --- Enable local mode and run ---
 export FABRIC_LOCAL_MODE=1
-
-# --- Run the MCP server (stdio transport) ---
-cd "$FABRIC_MCP_DIR"
 exec python3 -m fabric_api_mcp
