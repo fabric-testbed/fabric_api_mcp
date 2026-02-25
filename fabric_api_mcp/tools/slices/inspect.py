@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastmcp.server.dependencies import get_http_headers
 
 from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
 from fabric_api_mcp.log_helper.decorators import tool_logger
 from fabric_api_mcp.utils.async_helpers import call_threadsafe
@@ -20,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 def _list_nodes(
-    id_token: str,
     slice_name: Optional[str] = None,
+    id_token: Optional[str] = None,
     slice_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -37,7 +38,17 @@ def _list_nodes(
 
     table = []
     for node in slice_obj.get_nodes():
-        table.append(node.toDict())
+        row = node.toDict()
+        # In server mode, fablib doesn't have local SSH config so replace
+        # the ssh_command with a generic recommendation template.
+        if not config.local_mode and row.get("management_ip"):
+            username = row.get("username", "ubuntu")
+            mgmt_ip = row.get("management_ip", "")
+            row["ssh_command"] = (
+                f"ssh -i /path/to/slice_key -F /path/to/ssh_config "
+                f"{username}@{mgmt_ip}"
+            )
+        table.append(row)
 
     table = sorted(table, key=lambda x: x.get("name", ""))
 
@@ -50,8 +61,8 @@ def _list_nodes(
 
 
 def _list_networks(
-    id_token: str,
     slice_name: Optional[str] = None,
+    id_token: Optional[str] = None,
     slice_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -80,8 +91,8 @@ def _list_networks(
 
 
 def _list_interfaces(
-    id_token: str,
     slice_name: Optional[str] = None,
+    id_token: Optional[str] = None,
     slice_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -134,7 +145,9 @@ async def list_nodes(
         - management_ip (str): Management IP address (IPv6, available when Active)
         - state (str): Reservation state (e.g., Active, Ticketed)
         - error (str): Error message if any
-        - ssh_command (str): SSH command to connect (when Active)
+        - ssh_command (str): SSH command to connect (when Active).
+            In local mode this is the real command from fabric_rc config.
+            In server mode this is a template with placeholder paths.
 
     Args:
         slice_name: Name of the slice (provide either slice_name or slice_id).

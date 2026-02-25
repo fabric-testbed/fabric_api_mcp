@@ -78,6 +78,8 @@ class ServerConfig:
         Uses stderr so that stdio transport (which reserves stdout for
         JSON-RPC messages) is not corrupted.
         """
+        if self.local_mode:
+            return
         import sys
         _p = lambda msg: print(msg, file=sys.stderr)
         _p(f"Local mode: {self.local_mode}")

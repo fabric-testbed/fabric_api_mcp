@@ -82,7 +82,7 @@ def configure_logging() -> None:
         root.removeHandler(h)
 
     # Create handler with formatter
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(sys.stderr)
     if config.log_format == "json":
         fmt = JsonFormatter()
     else:
