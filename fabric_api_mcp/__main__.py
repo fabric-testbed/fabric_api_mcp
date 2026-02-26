@@ -102,7 +102,7 @@ async def _cache_lifespan(server: FastMCP):
 # MCP App Initialization
 # ---------------------------------------
 mcp = FastMCP(
-    name="fabric-mcp-proxy",
+    name="fabric-api-mcp",
     instructions="Proxy for accessing FABRIC API data via LLM tool calls.",
     version="2.0.0",
     lifespan=_cache_lifespan if config.transport == "http" else None,
