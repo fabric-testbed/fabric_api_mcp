@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 def _query_slices_sync(
-    id_token: Optional[str],
-    as_self: bool,
-    slice_id: Optional[str],
-    slice_name: Optional[str],
-    slice_state: Optional[List[str]],
-    exclude_slice_state: Optional[List[str]],
+    id_token: Optional[str] = None,
+    as_self: bool = True,
+    slice_id: Optional[str] = None,
+    slice_name: Optional[str] = None,
+    slice_state: Optional[List[str]] = None,
+    exclude_slice_state: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Synchronous helper that uses FablibManager to list/get slices."""
     from fabrictestbed.slice_manager import SliceState
@@ -139,9 +139,9 @@ async def query_slices(
 
 
 def _get_slivers_sync(
-    id_token: Optional[str],
-    slice_id: str,
-    as_self: bool,
+    id_token: Optional[str] = None,
+    slice_id: str = "",
+    as_self: bool = True,
 ) -> List[Dict[str, Any]]:
     """Synchronous helper that uses FablibManager to get slivers from a slice."""
     fablib = create_fablib_manager(id_token)
