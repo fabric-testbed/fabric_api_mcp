@@ -50,7 +50,20 @@ curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/
 curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local --no-browser
 ```
 
-The installer creates `~/.fabric-api-mcp/` with everything you need — venv, config, helper scripts — and prints the MCP client config snippet at the end. See `--help` for all options.
+The installer:
+1. Creates `~/.fabric-api-mcp/` with a Python venv, config directory, and helper scripts
+2. Installs `fabric_api_mcp` (which includes `fabric-cli`) into the venv
+3. Runs `fabric-cli configure setup` to authenticate via CILogon and set up your FABRIC config (token, SSH keys, `fabric_rc`)
+4. Prints the configured **project ID** and MCP client config snippet
+
+> **Project selection:** By default, your first FABRIC project is used. The installer prints the project ID at the end. To change it later:
+> ```bash
+> ~/.fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/.fabric-api-mcp/fabric_config --projectname <name>
+> # or by UUID:
+> ~/.fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/.fabric-api-mcp/fabric_config --projectid <uuid>
+> ```
+
+See `--help` for all options (`--config-dir`, `--venv`, `--no-browser`).
 
 > For manual setup or more control, see [Local mode setup](#local-mode-setup) and [Remote mode setup](#remote-mode-setup) below.
 
@@ -500,6 +513,8 @@ You can place the venv anywhere — just remember the path for later steps.
 pip install git+https://github.com/fabric-testbed/fabric_api_mcp.git
 ```
 
+This installs `fabric_api_mcp` **and** `fabric-cli` (included as a dependency) into the venv.
+
 Or clone and install in development mode:
 
 ```bash
@@ -510,15 +525,22 @@ pip install -e .
 
 ### Step 3: Set up the FABRIC config directory
 
-The easiest way is to use `fabric-cli configure setup`, which creates the config directory, generates a token, creates bastion and sliver SSH keys, and writes `ssh_config` and `fabric_rc` files — all in one step:
+Use the **venv's** `fabric-cli` (installed as a dependency in Step 2) to set up your config. This creates the config directory, generates a token, creates bastion and sliver SSH keys, and writes `ssh_config` and `fabric_rc` files — all in one step:
 
 ```bash
-fabric-cli configure setup --config-dir ~/work/fabric_config
+~/fabric-mcp-venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config
 ```
 
 This opens a browser for CILogon authentication. Once complete, it generates all required files in the config directory. Add `--no-browser` for remote/headless environments.
 
-> To specify a project: `--projectid <uuid>` or `--projectname <name>`. If omitted, your first project is used.
+> **Important:** Use the venv's `fabric-cli` (`~/fabric-mcp-venv/bin/fabric-cli`), not a system-installed one, to ensure you have the correct version with the `configure` command.
+
+> **Project selection:** By default, your first FABRIC project is used. To specify a project: `--projectid <uuid>` or `--projectname <name>`. The selected project ID is stored in `fabric_rc` as `FABRIC_PROJECT_ID`.
+
+> **To change your project later**, re-run configure with the new project:
+> ```bash
+> ~/fabric-mcp-venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config --projectname <name>
+> ```
 
 **Alternatively**, set up manually. The config directory should contain:
 - **`fabric_rc`** — environment file that exports FABRIC variables (token location, SSH key paths, etc.)
@@ -616,20 +638,22 @@ sudo apt install jq nodejs npm
 
 ### Step 2: Create your token
 
-Create a FABRIC token using `fabric-cli`. This opens a browser for CILogon authentication, then saves the token automatically:
+Create a FABRIC token using `fabric-cli`. If you installed local mode (which includes `fabric-cli` in the venv), use the venv's binary:
 
 ```bash
 mkdir -p ~/work/claude
-fabric-cli tokens create --tokenlocation ~/work/claude/id_token.json
+~/.fabric-api-mcp/venv/bin/fabric-cli tokens create --tokenlocation ~/work/claude/id_token.json
 ```
+
+This opens a browser for CILogon authentication, then saves the token automatically.
 
 > If running on a remote/headless VM, add `--no-browser` and follow the printed URL manually. Press `Ctrl+C` after login and paste the authorization code.
 
-Alternatively, download your token from the [FABRIC Portal → Experiments → Manage Tokens](https://portal.fabric-testbed.net/experiments#manageTokens) and copy it:
-
-```bash
-cp /path/to/downloaded/token.json ~/work/claude/id_token.json
-```
+> If you don't have local mode installed, you can install `fabric-cli` separately (`pip install fabric-cli`) or download your token manually from the [FABRIC Portal → Experiments → Manage Tokens](https://portal.fabric-testbed.net/experiments#manageTokens):
+>
+> ```bash
+> cp /path/to/downloaded/token.json ~/work/claude/id_token.json
+> ```
 
 ### Step 3: Get the helper script
 
@@ -978,7 +1002,7 @@ Prometheus and Grafana containers can still run but will have no data to scrape.
 
 ### Grafana authentication (Vouch Proxy + CILogon)
 
-Grafana is protected by [Vouch Proxy](https://github.com/vouch/vouch-proxy) using CILogon OIDC. Only users with `facility-operators` or `facility-viewers` roles (from the CILogon `isMemberOf` claim) can access dashboards. NGINX uses OpenResty's Lua to decode the ID token and check roles at the reverse-proxy layer.
+Grafana is protected by [Vouch Proxy](https://github.com/vouch/vouch-proxy) using CILogon OIDC. Only users with `facility-operators` or `facility-viewers` roles can access dashboards. NGINX (OpenResty) forwards the vouch session cookie to the FABRIC Core API to check user roles via Lua.
 
 **Setup:**
 
@@ -996,15 +1020,21 @@ Grafana is protected by [Vouch Proxy](https://github.com/vouch/vouch-proxy) usin
 3. **Update the Vouch config** — replace placeholders in `vouch/config`:
    - `VOUCH_HOSTNAME` → your server hostname
    - `CILOGON_CLIENT_ID` / `CILOGON_CLIENT_SECRET` → from step 1
+   - Ensure `publicAccess: false` (required — if `true`, vouch passes unauthenticated requests)
 
 4. **Start services** — `docker compose up -d` now starts 5 containers (adds `vouch-proxy`)
 
 **How it works:**
-- Unauthenticated requests to `/grafana/` are redirected to CILogon login
-- After login, Vouch Proxy sets a session cookie (`fabric-api-mcp`)
-- NGINX's Lua block decodes the JWT ID token and checks `isMemberOf` for `facility-operators` or `facility-viewers`
+- Unauthenticated requests to `/grafana/` are redirected to CILogon login via Vouch Proxy
+- After login, Vouch Proxy sets a session cookie (`fabric-service` on the `fabric-testbed.net` domain)
+- On each request, NGINX's `auth_request` calls Vouch to validate the session
+- A Lua `access_by_lua_block` then forwards the vouch cookie to the FABRIC Core API:
+  1. `GET /whoami` → retrieves the user's UUID
+  2. `GET /people/{uuid}?as_self=true` → retrieves the user's roles
+  3. Checks for `facility-operators` or `facility-viewers` in the roles list
+- Role check results are cached for 5 minutes (`lua_shared_dict role_cache`) to avoid repeated API calls
 - Users without the required roles get a 403 Forbidden response
-- Grafana is configured for anonymous viewer access (auth is enforced at NGINX)
+- Grafana is configured for anonymous viewer access (auth is enforced at the NGINX layer)
 - The `/mcp` endpoint is **not affected** — it continues using Bearer token auth
 
 ### Production considerations
