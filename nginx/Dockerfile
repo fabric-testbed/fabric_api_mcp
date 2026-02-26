@@ -1,3 +1,3 @@
 FROM openresty/openresty:latest
 
-RUN /usr/local/openresty/luajit/bin/luarocks install lua-resty-http
+RUN opm get ledgetech/lua-resty-http
