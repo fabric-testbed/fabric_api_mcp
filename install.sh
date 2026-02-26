@@ -10,7 +10,7 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local --remote
 # ===================================================================
 
-INSTALL_DIR="$HOME/.fabric-mcp"
+INSTALL_DIR="$HOME/.fabric-api-mcp"
 BIN_DIR="$INSTALL_DIR/bin"
 VENV_DIR=""
 CONFIG_DIR=""
@@ -35,8 +35,8 @@ Usage: install.sh [OPTIONS]
 Options:
   --local              Set up local mode (Python venv, fabric-cli, full features)
   --remote             Set up remote mode (jq + Node.js, lightweight)
-  --config-dir <path>  Override FABRIC config directory (default: ~/.fabric-mcp/fabric_config)
-  --venv <path>        Override Python venv path (default: ~/.fabric-mcp/venv)
+  --config-dir <path>  Override FABRIC config directory (default: ~/.fabric-api-mcp/fabric_config)
+  --venv <path>        Override Python venv path (default: ~/.fabric-api-mcp/venv)
   --no-browser         Pass --no-browser to fabric-cli (for headless environments)
   --help               Show this help message
 

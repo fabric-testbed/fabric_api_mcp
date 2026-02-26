@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/
 curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local --no-browser
 ```
 
-The installer creates `~/.fabric-mcp/` with everything you need — venv, config, helper scripts — and prints the MCP client config snippet at the end. See `--help` for all options.
+The installer creates `~/.fabric-api-mcp/` with everything you need — venv, config, helper scripts — and prints the MCP client config snippet at the end. See `--help` for all options.
 
 > For manual setup or more control, see [Local mode setup](#local-mode-setup) and [Remote mode setup](#remote-mode-setup) below.
 
@@ -59,8 +59,8 @@ The installer creates `~/.fabric-mcp/` with everything you need — venv, config
 ## MCP client configuration
 
 After installing (via the one-liner above or manually), add the FABRIC MCP server to your client. Replace `<SCRIPT>` with the path to your helper script:
-- **Local mode:** `~/.fabric-mcp/bin/fabric-api-local.sh` (or wherever you placed it)
-- **Remote mode:** `~/.fabric-mcp/bin/fabric-api.sh`
+- **Local mode:** `~/.fabric-api-mcp/bin/fabric-api-local.sh` (or wherever you placed it)
+- **Remote mode:** `~/.fabric-api-mcp/bin/fabric-api.sh`
 
 #### Claude Code CLI
 
