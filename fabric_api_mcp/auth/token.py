@@ -33,11 +33,21 @@ def decode_token_claims(token: str) -> Dict[str, str]:
         payload_b64 = parts[1]
         payload_b64 += "=" * (-len(payload_b64) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        return {
+        claims = {
             k: payload[k]
-            for k in ("sub", "email", "name")
+            for k in ("sub", "email", "name", "uuid")
             if k in payload
         }
+        # Extract first project name/uuid from the projects list
+        projects = payload.get("projects")
+        if isinstance(projects, list) and projects:
+            first = projects[0]
+            if isinstance(first, dict):
+                if "name" in first:
+                    claims["project_name"] = first["name"]
+                if "uuid" in first:
+                    claims["project_uuid"] = first["uuid"]
+        return claims
     except Exception:
         log.debug("Failed to decode JWT claims", exc_info=True)
         return {}

@@ -2,6 +2,8 @@
 Prometheus metrics definitions for FABRIC MCP Server.
 
 Central module defining all Prometheus metrics using prometheus-client.
+User identity labels use the FABRIC user UUID (a GUID from the JWT `uuid`
+claim) and email (`email` claim), not the CILogon `sub` URI.
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ mcp_http_requests_in_progress = Gauge(
 mcp_tool_calls_total = Counter(
     "mcp_tool_calls_total",
     "Total tool calls",
-    ["tool", "user_sub", "status"],
+    ["tool", "user_uuid", "user_email", "project_name", "status"],
 )
 
 mcp_tool_call_duration_seconds = Histogram(
@@ -66,18 +68,18 @@ mcp_requests_by_ip_total = Counter(
 mcp_auth_success_total = Counter(
     "mcp_auth_success_total",
     "Successful authentications by user and IP",
-    ["user_sub", "client_ip"],
+    ["user_uuid", "user_email", "client_ip"],
 )
 
 # Per-user metrics
 mcp_requests_by_user_total = Counter(
     "mcp_requests_by_user_total",
     "Per-user request count",
-    ["user_sub"],
+    ["user_uuid", "user_email"],
 )
 
 mcp_requests_by_user_path_total = Counter(
     "mcp_requests_by_user_path_total",
     "Per-user per-path request count",
-    ["user_sub", "method", "path"],
+    ["user_uuid", "user_email", "method", "path"],
 )

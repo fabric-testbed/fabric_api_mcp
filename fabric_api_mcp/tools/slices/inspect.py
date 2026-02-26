@@ -155,6 +155,15 @@ async def list_nodes(
 
     Returns:
         Dict with slice_name, slice_id, count, and nodes list.
+
+    Display as a Markdown table:
+
+        | Name | Site | Cores | RAM | Disk | Image | Host | State | Management IP |
+        |------|------|-------|-----|------|-------|------|-------|---------------|
+        | node1 | UTAH | 16 | 64 | 100 | default_ubuntu_22 | host1 | Active | 2001:db8::1 |
+
+    For Active nodes, include the SSH command below the table.
+    Append a summary line: ``Slice: my-slice — 2 nodes``
     """
     headers = get_http_headers(include={"authorization"}) or {}
     id_token = extract_bearer_token(headers)
@@ -198,6 +207,15 @@ async def list_networks(
 
     Returns:
         Dict with slice_name, slice_id, count, and networks list.
+
+    Display as a Markdown table:
+
+        | Name | Layer | Type | Site | Subnet | Gateway | State |
+        |------|-------|------|------|--------|---------|-------|
+        | net1 | L2 | L2STS | UTAH | | | Active |
+        | fabnet-v4 | L3 | FABNetv4 | STAR | 10.128.0.0/24 | 10.128.0.1 | Active |
+
+    Append a summary line: ``Slice: my-slice — 2 networks``
     """
     headers = get_http_headers(include={"authorization"}) or {}
     id_token = extract_bearer_token(headers)
@@ -245,6 +263,14 @@ async def list_interfaces(
 
     Returns:
         Dict with slice_name, slice_id, count, and interfaces list.
+
+    Display as a Markdown table:
+
+        | Node | Name | Network | VLAN | MAC | Device | IP Address | Bandwidth |
+        |------|------|---------|------|-----|--------|------------|-----------|
+        | node1 | node1-nic1-p0 | net1 | | AA:BB:CC:DD:EE:FF | ens7 | 10.128.0.2 | 100 |
+
+    Append a summary line: ``Slice: my-slice — 3 interfaces``
     """
     headers = get_http_headers(include={"authorization"}) or {}
     id_token = extract_bearer_token(headers)

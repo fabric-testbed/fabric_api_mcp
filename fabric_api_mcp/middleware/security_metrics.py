@@ -61,8 +61,11 @@ class SecurityMetricsMiddleware(BaseHTTPMiddleware):
                 mcp_auth_failures_total.labels(reason="invalid_jwt", client_ip=client_ip).inc()
             else:
                 _check_expiry(token, claims, client_ip)
-                user_sub = claims.get("sub", "unknown")
-                mcp_auth_success_total.labels(user_sub=user_sub, client_ip=client_ip).inc()
+                user_uuid = claims.get("uuid", "")
+                user_email = claims.get("email", "unknown")
+                mcp_auth_success_total.labels(
+                    user_uuid=user_uuid, user_email=user_email, client_ip=client_ip,
+                ).inc()
 
         response = await call_next(request)
         return response

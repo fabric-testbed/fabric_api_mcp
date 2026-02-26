@@ -180,10 +180,20 @@ docker compose up -d
 This starts four containers:
 - **`fabric-api-mcp`** — the MCP server (port 5000, internal only)
 - **`fabric-api-nginx`** — NGINX reverse proxy (port 443, public)
-- **`fabric-api-prometheus`** — Prometheus metrics collector (port 9090)
-- **`fabric-api-grafana`** — Grafana dashboards (port 3000)
+- **`fabric-api-prometheus`** — Prometheus metrics collector (internal only, 30-day retention)
+- **`fabric-api-grafana`** — Grafana dashboards (exposed via NGINX at `/grafana/`)
 
-### Step 4: Verify
+### Step 4: Create monitoring data directories
+
+Prometheus and Grafana persist data to NFS-backed volumes. Create the directories and set ownership before first start:
+
+```bash
+mkdir -p /opt/data/production/services/api-mcp/monitoring/{prometheus,grafana}
+chown 65534:65534 /opt/data/production/services/api-mcp/monitoring/prometheus  # prometheus (nobody)
+chown 472:472 /opt/data/production/services/api-mcp/monitoring/grafana         # grafana
+```
+
+### Step 5: Verify
 
 ```bash
 # Check containers are running
@@ -195,15 +205,22 @@ curl -k https://localhost/healthz
 # Check MCP server logs
 docker compose logs -f mcp-server
 
-# Check Prometheus is scraping the MCP server
-curl http://localhost:9090/api/v1/targets
+# Check Prometheus is scraping (internal only — use docker exec)
+docker compose exec prometheus wget -qO- http://localhost:9090/api/v1/targets | python3 -m json.tool
 # fabric-mcp target should show state: "up"
 
 # Check the raw metrics endpoint (internal, not exposed via NGINX)
 docker compose exec mcp-server curl -s http://localhost:5000/metrics | head -20
+
+# Access Grafana via NGINX
+# Open https://<your-host>/grafana/ (login: admin/admin)
 ```
 
-The MCP endpoint is available at `https://<your-host>/mcp`.
+| Service | URL | Access |
+|---------|-----|--------|
+| MCP endpoint | `https://<your-host>/mcp` | Bearer token required |
+| Grafana | `https://<your-host>/grafana/` | `admin` / `admin` (change on first login) |
+| Prometheus | Internal only (Docker network) | Via `docker compose exec prometheus ...` |
 
 ### docker-compose.yml
 
@@ -211,7 +228,7 @@ The MCP endpoint is available at `https://<your-host>/mcp`.
 services:
   mcp-server:
     build:
-      context: fabric_api_mcp/
+      context: .
       dockerfile: Dockerfile
     container_name: fabric-api-mcp
     image: fabric-api-mcp:latest
@@ -246,13 +263,15 @@ services:
     image: prom/prometheus:latest
     container_name: fabric-api-prometheus
     restart: always
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
     networks:
       - frontend
-    ports:
-      - 9090:9090
+    # No ports exposed — internal only (Grafana queries via Docker network)
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
+      - /opt/data/production/services/api-mcp/monitoring/prometheus:/prometheus
 
   grafana:
     image: grafana/grafana:latest
@@ -260,24 +279,23 @@ services:
     restart: always
     networks:
       - frontend
-    ports:
-      - 3000:3000
+    # No ports exposed — accessed via NGINX at /grafana/
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SERVER_ROOT_URL: "https://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana-data:/var/lib/grafana
+      - /opt/data/production/services/api-mcp/monitoring/grafana:/var/lib/grafana
 
 networks:
   frontend:
   backend:
     internal: true
 
-volumes:
-  prometheus-data:
-  grafana-data:
+volumes: {}
 ````
 
 ### Minimal NGINX `default.conf`
@@ -801,22 +819,25 @@ The MCP server includes built-in Prometheus metrics and a pre-configured Grafana
 ### Architecture
 
 ```
-MCP Server (:5000/metrics)  ←── Prometheus (:9090) scrapes every 15s
-                                       ↓
-                                 Grafana (:3000) queries Prometheus
+Client → NGINX (:443) → MCP Server (:5000)
+                  ↓
+           /grafana/ → Grafana (:3000) → Prometheus (:9090) → MCP Server (:5000/metrics)
 ```
 
-- `/metrics` is on the internal Docker network only — **not** exposed through NGINX
-- Prometheus and Grafana are on the `frontend` Docker network alongside the MCP server
+- All services are on the internal `frontend` Docker network
+- `/metrics` endpoint is internal only — **not** exposed through NGINX
+- Prometheus and Grafana have **no ports exposed** to the host — Grafana is accessed via NGINX at `/grafana/`
+- Prometheus data is retained for **30 days** (~100-500 MB depending on cardinality)
+- Data is persisted to NFS at `/opt/data/production/services/api-mcp/monitoring/`
 
-### Accessing the dashboards
+### Accessing the dashboard
 
 After `docker compose up -d`:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Prometheus | http://localhost:9090 | None |
-| Grafana | http://localhost:3000 | `admin` / `admin` |
+| Grafana | `https://<your-host>/grafana/` | `admin` / `admin` |
+| Prometheus | Internal only | `docker compose exec prometheus ...` |
 
 In Grafana, the **FABRIC MCP** dashboard is auto-provisioned and available immediately.
 
@@ -834,15 +855,17 @@ In Grafana, the **FABRIC MCP** dashboard is auto-provisioned and available immed
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `mcp_tool_calls_total` | Counter | `tool`, `user_sub`, `status` | Tool calls (who called what) |
+| `mcp_tool_calls_total` | Counter | `tool`, `user_uuid`, `user_email`, `project_name`, `status` | Tool calls (who called what, from which project) |
 | `mcp_tool_call_duration_seconds` | Histogram | `tool` | Tool execution latency |
+
+User identity uses the **FABRIC user UUID** (a GUID from the JWT `uuid` claim) and **email** (`email` claim), not the CILogon `sub` URI. Project name is extracted from the first project in the JWT `projects` claim.
 
 #### Per-user / access log metrics
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `mcp_requests_by_user_total` | Counter | `user_sub` | Total requests per user |
-| `mcp_requests_by_user_path_total` | Counter | `user_sub`, `method`, `path` | Per-user per-endpoint breakdown |
+| `mcp_requests_by_user_total` | Counter | `user_uuid`, `user_email` | Total requests per user |
+| `mcp_requests_by_user_path_total` | Counter | `user_uuid`, `user_email`, `method`, `path` | Per-user per-endpoint breakdown |
 | `mcp_rate_limit_hits_total` | Counter | `key_type` | Rate limit 429 responses |
 
 #### Security metrics
@@ -850,36 +873,38 @@ In Grafana, the **FABRIC MCP** dashboard is auto-provisioned and available immed
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `mcp_auth_failures_total` | Counter | `reason`, `client_ip` | Auth failures by reason and source IP |
-| `mcp_auth_success_total` | Counter | `user_sub`, `client_ip` | Successful auth by user + IP |
+| `mcp_auth_success_total` | Counter | `user_uuid`, `user_email`, `client_ip` | Successful auth by user + IP |
 | `mcp_requests_by_ip_total` | Counter | `client_ip` | All requests by source IP |
 
 Auth failure reasons: `missing_token`, `malformed_header`, `invalid_jwt`, `expired_token`.
 
 ### Grafana dashboard panels
 
-The pre-built **FABRIC MCP** dashboard includes 15 panels:
+The pre-built **FABRIC MCP** dashboard is organized into 4 sections with 19 panels:
 
-**Operations:**
+**Overview:**
 - Request rate (total / 5xx / 429)
 - Request latency percentiles (p50, p95, p99)
 - Active requests gauge
 - Error rate percentage
 - Rate limit hits over time
 
-**Tool usage:**
+**Tool Calls:**
 - Tool call rate by tool name
 - Tool latency by tool (p95)
 - Tool errors by tool
-- Tool calls by user (who called which tool)
+- Tool calls by user (email + UUID → tool, with call count)
+- Tool calls total by tool (pie chart — tool usage distribution)
+- Tool calls by project (project + email → tool breakdown)
 
-**Access log / user activity:**
-- Top users by total request count
-- Requests by user + endpoint
-- Top client IPs by request volume
+**Users & Access:**
+- Top users by total request count (email + UUID)
+- Requests by user + endpoint (email + method + path)
 
 **Security:**
 - Auth failures by reason (stacked time series)
 - Auth failures by IP (table — spot brute-force or overseas probing)
+- Top client IPs by request volume
 - User-to-IP mapping (table — spot token reuse from unexpected locations)
 
 ### Example Prometheus queries
@@ -892,16 +917,19 @@ sum(rate(mcp_http_requests_total[5m]))
 histogram_quantile(0.95, sum(rate(mcp_tool_call_duration_seconds_bucket[5m])) by (le, tool))
 
 # Which tools did a specific user call?
-sum(mcp_tool_calls_total{user_sub="some-user-uuid"}) by (tool)
+sum(mcp_tool_calls_total{user_email="user@example.edu"}) by (tool)
+
+# Tool calls by project
+sum(mcp_tool_calls_total) by (project_name, tool)
 
 # Auth failures from a specific IP in the last hour
 sum(increase(mcp_auth_failures_total{client_ip="203.0.113.42"}[1h]))
 
 # Users authenticating from multiple IPs (possible token sharing)
-count(mcp_auth_success_total) by (user_sub) > 3
+count(mcp_auth_success_total) by (user_email) > 3
 
 # Top 10 users by request count in the last 24h
-topk(10, sum(increase(mcp_requests_by_user_total[24h])) by (user_sub))
+topk(10, sum(increase(mcp_requests_by_user_total[24h])) by (user_email, user_uuid))
 ```
 
 ### Disabling metrics
@@ -916,13 +944,10 @@ Prometheus and Grafana containers can still run but will have no data to scrape.
 ### Production considerations
 
 - **Change Grafana password**: The default `admin`/`admin` is for development only. Set `GF_SECURITY_ADMIN_PASSWORD` to a strong password or use environment-specific secrets.
-- **Restrict port access**: Prometheus (9090) and Grafana (3000) are bound to all interfaces by default. In production, bind to `127.0.0.1` or put them behind a firewall:
-  ```yaml
-  ports:
-    - 127.0.0.1:9090:9090  # Prometheus
-    - 127.0.0.1:3000:3000  # Grafana
-  ```
-- **Data retention**: Prometheus default retention is 15 days. Adjust with `--storage.tsdb.retention.time=90d` in the Prometheus command.
+- **No exposed ports**: Prometheus and Grafana have no ports exposed to the host. Grafana is served through NGINX at `/grafana/`. Prometheus is accessible only from within the Docker network.
+- **Data retention**: Prometheus is configured with 30-day retention (`--storage.tsdb.retention.time=30d`). Estimated disk usage is ~100-500 MB for 30 days depending on user/tool cardinality.
+- **NFS persistence**: Prometheus and Grafana data directories are bind-mounted to `/opt/data/production/services/api-mcp/monitoring/`. Ensure proper ownership (Prometheus: UID 65534, Grafana: UID 472).
+- **Client IP forwarding**: NGINX forwards the real client IP via `X-Real-IP` and `X-Forwarded-For` headers. These must be set inside each `location` block (NGINX does not inherit `proxy_set_header` from the server block when a location defines its own).
 - **Alerting**: Add Prometheus alerting rules (e.g., alert on auth failure spikes, error rate > 5%) and configure Grafana notification channels (email, Slack, PagerDuty).
 
 ---
@@ -933,7 +958,7 @@ Prometheus and Grafana containers can still run but will have no data to scrape.
 * Do not print tokens in logs. (Server code avoids this.)
 * Terminate TLS at NGINX; keep the MCP service on an internal network.
 * Rotate TLS certs and restrict `client_max_body_size` if desired.
-* **Auth monitoring**: Prometheus tracks auth failures (missing/malformed/invalid/expired tokens) by client IP, and successful auth by user+IP pair. Use the Grafana security panels or Prometheus queries to detect brute-force attempts, overseas probing, and token reuse from unexpected locations.
+* **Auth monitoring**: Prometheus tracks auth failures (missing/malformed/invalid/expired tokens) by client IP, and successful auth by user (UUID + email) + IP pair. Tool calls are tracked per user and FABRIC project. Use the Grafana security panels or Prometheus queries to detect brute-force attempts, overseas probing, and token reuse from unexpected locations.
 
 ---
 

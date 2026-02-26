@@ -9,9 +9,15 @@
   "links": [],
   "panels": [
     {
+      "title": "── Overview ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 0 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
       "title": "Request Rate (req/s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 2 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -41,7 +47,7 @@
     {
       "title": "Request Latency (p50 / p95 / p99)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 2 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -71,7 +77,7 @@
     {
       "title": "Active Requests",
       "type": "gauge",
-      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -96,7 +102,7 @@
     {
       "title": "Error Rate (%)",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 8 },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -122,7 +128,7 @@
     {
       "title": "Rate Limit Hits",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -140,9 +146,15 @@
       ]
     },
     {
+      "title": "── Tool Calls ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 18 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
       "title": "Tool Call Rate by Tool",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -162,7 +174,7 @@
     {
       "title": "Tool Latency by Tool (p95)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -182,7 +194,7 @@
     {
       "title": "Tool Errors by Tool",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -201,9 +213,9 @@
     },
     {
       "title": "Tool Calls by User",
-      "description": "Which user called which tool and how many times",
+      "description": "Which user called which tool and how many times (by FABRIC UUID and email)",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {},
@@ -216,8 +228,8 @@
       },
       "targets": [
         {
-          "expr": "topk(20, sum(mcp_tool_calls_total) by (user_sub, tool))",
-          "legendFormat": "{{user_sub}} → {{tool}}",
+          "expr": "topk(20, sum(mcp_tool_calls_total) by (user_email, user_uuid, tool))",
+          "legendFormat": "{{user_email}} → {{tool}}",
           "refId": "A",
           "instant": true,
           "format": "table"
@@ -228,16 +240,89 @@
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true },
-            "renameByName": { "user_sub": "User", "tool": "Tool", "Value": "Calls" }
+            "renameByName": {
+              "user_email": "Email",
+              "user_uuid": "User UUID",
+              "tool": "Tool",
+              "Value": "Calls"
+            }
           }
         }
       ]
     },
     {
+      "title": "Tool Calls Total by Tool",
+      "description": "Total tool call counts — which tools are used most",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] }
+      },
+      "targets": [
+        {
+          "expr": "sum(mcp_tool_calls_total) by (tool)",
+          "legendFormat": "{{tool}}",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "title": "Tool Calls by Project",
+      "description": "Tool usage broken down by FABRIC project",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [{ "id": "displayName", "value": "Calls" }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "topk(20, sum(mcp_tool_calls_total) by (user_email, tool, project_name))",
+          "legendFormat": "{{project_name}} / {{user_email}} → {{tool}}",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "renameByName": {
+              "project_name": "Project",
+              "user_email": "Email",
+              "tool": "Tool",
+              "Value": "Calls"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "title": "── Users & Access ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 44 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
       "title": "Requests by User + Endpoint",
       "description": "Per-user per-path HTTP request breakdown",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 46 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {},
@@ -250,8 +335,8 @@
       },
       "targets": [
         {
-          "expr": "topk(20, sum(mcp_requests_by_user_path_total) by (user_sub, method, path))",
-          "legendFormat": "{{user_sub}} {{method}} {{path}}",
+          "expr": "topk(20, sum(mcp_requests_by_user_path_total) by (user_email, user_uuid, method, path))",
+          "legendFormat": "{{user_email}} {{method}} {{path}}",
           "refId": "A",
           "instant": true,
           "format": "table"
@@ -262,7 +347,13 @@
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true },
-            "renameByName": { "user_sub": "User", "method": "Method", "path": "Path", "Value": "Requests" }
+            "renameByName": {
+              "user_email": "Email",
+              "user_uuid": "User UUID",
+              "method": "Method",
+              "path": "Path",
+              "Value": "Requests"
+            }
           }
         }
       ]
@@ -270,7 +361,7 @@
     {
       "title": "Top Users by Request Count",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {},
@@ -283,8 +374,8 @@
       },
       "targets": [
         {
-          "expr": "topk(10, sum(mcp_requests_by_user_total) by (user_sub))",
-          "legendFormat": "{{user_sub}}",
+          "expr": "topk(10, sum(mcp_requests_by_user_total) by (user_email, user_uuid))",
+          "legendFormat": "{{user_email}}",
           "refId": "A",
           "instant": true,
           "format": "table"
@@ -295,16 +386,26 @@
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true },
-            "renameByName": { "user_sub": "User", "Value": "Requests" }
+            "renameByName": {
+              "user_email": "Email",
+              "user_uuid": "User UUID",
+              "Value": "Requests"
+            }
           }
         }
       ]
     },
     {
+      "title": "── Security ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 54 },
+      "options": { "mode": "markdown", "content": "" }
+    },
+    {
       "title": "Auth Failures by Reason",
       "description": "Authentication failures broken down by reason (missing_token, malformed_header, invalid_jwt, expired_token)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
@@ -325,7 +426,7 @@
       "title": "Auth Failures by IP",
       "description": "Top client IPs generating auth failures — spot brute-force or overseas probing",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {},
@@ -359,7 +460,7 @@
       "title": "Top Client IPs by Request Volume",
       "description": "All requests by IP — spot unusual traffic sources",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 64 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {},
@@ -393,7 +494,7 @@
       "title": "User-to-IP Mapping (Auth Success)",
       "description": "Which users authenticated from which IPs — spot token reuse from unexpected locations",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 64 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {},
@@ -406,8 +507,8 @@
       },
       "targets": [
         {
-          "expr": "topk(20, sum(mcp_auth_success_total) by (user_sub, client_ip))",
-          "legendFormat": "{{user_sub}} @ {{client_ip}}",
+          "expr": "topk(20, sum(mcp_auth_success_total) by (user_email, user_uuid, client_ip))",
+          "legendFormat": "{{user_email}} @ {{client_ip}}",
           "refId": "A",
           "instant": true,
           "format": "table"
@@ -418,7 +519,12 @@
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true },
-            "renameByName": { "user_sub": "User", "client_ip": "Client IP", "Value": "Requests" }
+            "renameByName": {
+              "user_email": "Email",
+              "user_uuid": "User UUID",
+              "client_ip": "Client IP",
+              "Value": "Requests"
+            }
           }
         }
       ]
@@ -432,5 +538,5 @@
   "timezone": "utc",
   "title": "FABRIC MCP",
   "uid": "fabric-mcp-dashboard",
-  "version": 1
+  "version": 2
 }

@@ -61,6 +61,8 @@ def tool_logger(tool_name: str) -> Callable:
             rid = None
             user_sub = ""
             user_email = ""
+            user_uuid = ""
+            project_name = ""
             client_ip = ""
             try:
                 from fastmcp.server.dependencies import get_http_headers
@@ -75,6 +77,8 @@ def tool_logger(tool_name: str) -> Callable:
                     claims = decode_token_claims(token)
                     user_sub = claims.get("sub", "")
                     user_email = claims.get("email", "")
+                    user_uuid = claims.get("uuid", "")
+                    project_name = claims.get("project_name", "")
 
                 # Extract client IP
                 client_ip = headers.get("x-real-ip", "")
@@ -93,6 +97,8 @@ def tool_logger(tool_name: str) -> Callable:
                 "request_id": rid,
                 "user_sub": user_sub,
                 "user_email": user_email,
+                "user_uuid": user_uuid,
+                "project_name": project_name,
                 "client_ip": client_ip,
             }
 
@@ -137,7 +143,9 @@ def tool_logger(tool_name: str) -> Callable:
                             mcp_tool_call_duration_seconds,
                         )
                         mcp_tool_calls_total.labels(
-                            tool=tool_name, user_sub=user_sub, status="ok",
+                            tool=tool_name, user_uuid=user_uuid,
+                            user_email=user_email,
+                            project_name=project_name, status="ok",
                         ).inc()
                         mcp_tool_call_duration_seconds.labels(tool=tool_name).observe(dur_s)
                 except Exception:
@@ -173,7 +181,9 @@ def tool_logger(tool_name: str) -> Callable:
                             mcp_tool_call_duration_seconds,
                         )
                         mcp_tool_calls_total.labels(
-                            tool=tool_name, user_sub=user_sub, status="error",
+                            tool=tool_name, user_uuid=user_uuid,
+                            user_email=user_email,
+                            project_name=project_name, status="error",
                         ).inc()
                         mcp_tool_call_duration_seconds.labels(tool=tool_name).observe(dur_s)
                 except Exception:
