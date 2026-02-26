@@ -52,11 +52,15 @@ class MetricsMiddleware(BaseHTTPMiddleware):
                 token = extract_bearer_token(dict(request.headers))
                 if token:
                     claims = decode_token_claims(token)
-                    user_sub = claims.get("sub", "")
-                    if user_sub:
-                        mcp_requests_by_user_total.labels(user_sub=user_sub).inc()
+                    user_uuid = claims.get("uuid", "")
+                    user_email = claims.get("email", "")
+                    if user_uuid or user_email:
+                        mcp_requests_by_user_total.labels(
+                            user_uuid=user_uuid, user_email=user_email,
+                        ).inc()
                         mcp_requests_by_user_path_total.labels(
-                            user_sub=user_sub, method=method, path=path,
+                            user_uuid=user_uuid, user_email=user_email,
+                            method=method, path=path,
                         ).inc()
             except Exception:
                 pass
