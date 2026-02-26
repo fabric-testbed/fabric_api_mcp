@@ -1,0 +1,56 @@
+# Vouch Proxy config for FABRIC API MCP
+# CILogon OIDC authentication with isMemberOf role claims
+
+vouch:
+    logLevel: info
+
+    allowAllUsers: true
+
+    # Require authentication on all vouch-protected paths
+    publicAccess: false
+
+    post_logout_redirect_uris:
+        - https://VOUCH_HOSTNAME/grafana/
+
+    jwt:
+        secret: DUMMY_SECRET
+
+    cookie:
+        # allow the jwt/cookie to be set into http://yourdomain.com (defaults to true, requiring https://yourdomain.com)
+        secure: false
+        # vouch.cookie.domain must be set when enabling allowAllUsers
+        domain: fabric-testbed.net
+        name: fabric-service
+
+    headers:
+        jwt: X-Vouch-Token
+        querystring: access_token
+        redirect: X-Vouch-Requested-URI
+        claims:
+            - aud
+            - email
+            - family_name
+            - given_name
+            - iss
+            - name
+            - oidc
+            - sub
+            - token_id
+            - isMemberOf
+        idtoken: X-Vouch-IdP-IdToken
+        accesstoken: X-Vouch-IdP-AccessToken
+        refreshtoken: X-Vouch-IdP-RefreshToken
+
+oauth:
+    provider: oidc
+    client_id: CILOGON_CLIENT_ID
+    client_secret: CILOGON_CLIENT_SECRET
+    auth_url: https://cilogon.org/authorize
+    token_url: https://cilogon.org/oauth2/token
+    user_info_url: https://cilogon.org/oauth2/userinfo
+    scopes:
+        - openid
+        - email
+        - profile
+        - org.cilogon.userinfo
+    callback_url: https://VOUCH_HOSTNAME/auth

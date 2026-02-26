@@ -17,6 +17,7 @@ CONFIG_DIR=""
 INSTALL_LOCAL=false
 INSTALL_REMOTE=false
 NO_BROWSER=false
+CONFIGURED_PROJECT_ID=""
 
 GITHUB_RAW="https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main"
 
@@ -199,21 +200,7 @@ setup_local() {
   # 1. Ensure Python 3.11+
   ensure_python
 
-  # 2. Install fabric-cli (for token creation + config setup)
-  if command -v fabric-cli >/dev/null 2>&1; then
-    ok "fabric-cli is already installed"
-  else
-    info "Installing fabric-cli..."
-    "$PYTHON" -m pip install --quiet --user fabric-cli
-    if command -v fabric-cli >/dev/null 2>&1; then
-      ok "fabric-cli installed"
-    else
-      warn "fabric-cli installed but not on PATH. It may be in ~/.local/bin/"
-      export PATH="$HOME/.local/bin:$PATH"
-    fi
-  fi
-
-  # 3. Create Python venv
+  # 2. Create Python venv
   if [[ -d "$VENV_DIR" ]]; then
     ok "Python venv already exists: $VENV_DIR"
   else
@@ -222,39 +209,45 @@ setup_local() {
     ok "Venv created"
   fi
 
-  # 4. Install fabric_api_mcp into venv
+  # 3. Install fabric_api_mcp into venv (includes fabric-cli as dependency)
   info "Installing fabric_api_mcp into venv..."
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
   "$VENV_DIR/bin/pip" install --quiet "git+https://github.com/fabric-testbed/fabric_api_mcp.git"
-  ok "fabric_api_mcp installed"
+  ok "fabric_api_mcp installed (includes fabric-cli)"
 
-  # 5. Create config dir
+  # 4. Create config dir
   mkdir -p "$CONFIG_DIR"
   ok "Config directory: $CONFIG_DIR"
 
-  # 6. Run fabric-cli configure setup (interactive)
+  # 5. Run fabric-cli configure setup (interactive) — use the venv's fabric-cli
+  local venv_cli="$VENV_DIR/bin/fabric-cli"
   if [[ -f "$CONFIG_DIR/fabric_rc" ]]; then
     ok "fabric_rc already exists at $CONFIG_DIR/fabric_rc — skipping configure"
   else
-    info "Running fabric-cli configure setup..."
-    info "This will open a browser for CILogon authentication."
-    local cli_args=(configure setup --config-dir "$CONFIG_DIR")
-    if $NO_BROWSER; then
-      cli_args+=(--no-browser)
-    fi
-    if command -v fabric-cli >/dev/null 2>&1; then
-      fabric-cli "${cli_args[@]}" || {
+    if [[ -x "$venv_cli" ]]; then
+      info "Running fabric-cli configure setup..."
+      info "This will open a browser for CILogon authentication."
+      info "If not specified, your first FABRIC project will be selected by default."
+      local cli_args=(configure setup --config-dir "$CONFIG_DIR")
+      if $NO_BROWSER; then
+        cli_args+=(--no-browser)
+      fi
+      "$venv_cli" "${cli_args[@]}" || {
         warn "fabric-cli configure setup failed or was cancelled."
-        warn "You can run it later: fabric-cli configure setup --config-dir $CONFIG_DIR"
+        warn "You can run it later: $venv_cli configure setup --config-dir $CONFIG_DIR"
       }
     else
-      warn "fabric-cli not found on PATH. Run manually after install:"
-      warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-      warn "  fabric-cli configure setup --config-dir $CONFIG_DIR"
+      warn "fabric-cli not found in venv. Run manually after install:"
+      warn "  $venv_cli configure setup --config-dir $CONFIG_DIR"
     fi
   fi
 
-  # 7. Download fabric-api-local.sh
+  # Extract project ID from fabric_rc (if it exists)
+  if [[ -f "$CONFIG_DIR/fabric_rc" ]]; then
+    CONFIGURED_PROJECT_ID="$(sed -n 's/^export FABRIC_PROJECT_ID=//p' "$CONFIG_DIR/fabric_rc" 2>/dev/null || true)"
+  fi
+
+  # 6. Download fabric-api-local.sh
   info "Downloading fabric-api-local.sh..."
   curl -fsSL "$GITHUB_RAW/scripts/fabric-api-local.sh" -o "$BIN_DIR/fabric-api-local.sh"
   chmod +x "$BIN_DIR/fabric-api-local.sh"
@@ -294,28 +287,30 @@ setup_remote() {
     ok "Node.js installed"
   fi
 
-  # 3. Create token (if fabric-cli is available)
+  # 3. Create token (if fabric-cli is available in the venv)
   local token_dir="$INSTALL_DIR"
   local token_file="$token_dir/id_token.json"
+  local venv_cli="$VENV_DIR/bin/fabric-cli"
   if [[ -f "$token_file" ]]; then
     ok "Token file already exists: $token_file"
   else
-    if command -v fabric-cli >/dev/null 2>&1; then
+    if [[ -x "$venv_cli" ]]; then
       info "Creating FABRIC token via fabric-cli..."
       local cli_args=(tokens create --tokenlocation "$token_file")
       if $NO_BROWSER; then
         cli_args+=(--no-browser)
       fi
-      fabric-cli "${cli_args[@]}" || {
+      "$venv_cli" "${cli_args[@]}" || {
         warn "Token creation failed or was cancelled."
         warn "You can create a token later:"
-        warn "  fabric-cli tokens create --tokenlocation $token_file"
+        warn "  $venv_cli tokens create --tokenlocation $token_file"
         warn "Or download from: https://portal.fabric-testbed.net/experiments#manageTokens"
       }
     else
       warn "fabric-cli not available. Download your token manually:"
       warn "  1. Go to https://portal.fabric-testbed.net/experiments#manageTokens"
       warn "  2. Save the token JSON to: $token_file"
+      warn "Or install local mode first (--local) to get fabric-cli in the venv."
     fi
   fi
 
@@ -348,6 +343,9 @@ print_summary() {
     echo "  Script:   $BIN_DIR/fabric-api-local.sh"
     echo "  Venv:     $VENV_DIR"
     echo "  Config:   $CONFIG_DIR"
+    if [[ -n "$CONFIGURED_PROJECT_ID" ]]; then
+      echo "  Project:  $CONFIGURED_PROJECT_ID"
+    fi
     echo ""
     echo "  MCP client config (Claude Code CLI):"
     echo "    claude mcp add fabric-api $BIN_DIR/fabric-api-local.sh"
@@ -387,11 +385,19 @@ JSONEOF
 
   echo ""
   echo "  Next steps:"
+  local step=1
   if $INSTALL_LOCAL && [[ ! -f "$CONFIG_DIR/fabric_rc" ]]; then
-    echo "    1. Run: fabric-cli configure setup --config-dir $CONFIG_DIR"
-    echo "    2. Add the MCP server to your client (see config above)"
-  else
-    echo "    1. Add the MCP server to your client (see config above)"
+    echo "    $step. Run: $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR"
+    step=$((step + 1))
+  fi
+  echo "    $step. Add the MCP server to your client (see config above)"
+  step=$((step + 1))
+
+  if $INSTALL_LOCAL; then
+    echo ""
+    echo "  To change your FABRIC project:"
+    echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectname <name>"
+    echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectid <uuid>"
   fi
   echo ""
   echo "  Documentation: https://github.com/fabric-testbed/fabric_api_mcp"
