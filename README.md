@@ -9,6 +9,96 @@ A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC
 
 ---
 
+## Table of contents
+
+- [Quick install](#quick-install)
+- [MCP client configuration](#mcp-client-configuration)
+- [What this server provides](#what-this-server-provides)
+- [Authentication](#authentication)
+- [Architecture](#architecture)
+- [Repo layout](#repo-layout)
+- [Environment variables](#environment-variables)
+- [Deploy with Docker Compose (Server Mode)](#deploy-with-docker-compose-server-mode)
+- [Adding new tools](#adding-new-tools)
+- [Local mode setup](#local-mode-setup)
+- [Remote mode setup](#remote-mode-setup)
+- [Local vs Remote — which to use?](#local-vs-remote--which-to-use)
+- [Quick tool examples](#quick-tool-examples)
+- [System prompt](#system-prompt)
+- [Logging](#logging)
+- [Resource cache](#resource-cache)
+- [Monitoring & Metrics (Server Mode Only)](#monitoring--metrics-server-mode-only)
+- [Security notes](#security-notes)
+
+---
+
+## Quick install
+
+Set up FABRIC MCP with a single command:
+
+```bash
+# Local mode (full-featured: Python venv, SSH to VMs, post-boot config)
+curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local
+
+# Remote mode (lightweight: just jq + Node.js, no Python venv needed)
+curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --remote
+
+# Both modes
+curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local --remote
+
+# Headless environment (no browser)
+curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local --no-browser
+```
+
+The installer creates `~/.fabric-mcp/` with everything you need — venv, config, helper scripts — and prints the MCP client config snippet at the end. See `--help` for all options.
+
+> For manual setup or more control, see [Local mode setup](#local-mode-setup) and [Remote mode setup](#remote-mode-setup) below.
+
+---
+
+## MCP client configuration
+
+After installing (via the one-liner above or manually), add the FABRIC MCP server to your client. Replace `<SCRIPT>` with the path to your helper script:
+- **Local mode:** `~/.fabric-mcp/bin/fabric-api-local.sh` (or wherever you placed it)
+- **Remote mode:** `~/.fabric-mcp/bin/fabric-api.sh`
+
+#### Claude Code CLI
+
+```bash
+claude mcp add fabric-api <SCRIPT>
+```
+
+#### Claude Desktop
+
+Edit `claude_desktop_config.json` (Settings → Developer → Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "fabric-api": {
+      "command": "<SCRIPT>"
+    }
+  }
+}
+```
+
+#### VS Code
+
+Add to `.mcp.json` in your project root (or workspace settings):
+
+```json
+{
+  "servers": {
+    "fabric-api": {
+      "type": "stdio",
+      "command": "<SCRIPT>"
+    }
+  }
+}
+```
+
+---
+
 ## What this server provides
 
 ### Exposed MCP tools (from this codebase)
@@ -113,6 +203,7 @@ FABRIC Provisioning MCP Server (FastMCP + FastAPI)
 │  ├─ fullchain.pem
 │  └─ privkey.pem
 ├─ docker-compose.yml
+├─ env.template             # container UID/GID defaults (copy to .env)
 └─ README.md                 # <— this file
 
 ````
@@ -150,7 +241,7 @@ Server respects these (all optional unless stated):
 ### Step 1: Clone the repository
 
 ```bash
-git clone https://github.com/fabric-testbed/fabric-mcp.git
+git clone https://github.com/fabric-testbed/fabric_api_mcp.git
 cd fabric-mcp
 ```
 
@@ -171,7 +262,39 @@ cp /path/to/your/fullchain.pem ssl/fullchain.pem
 cp /path/to/your/privkey.pem ssl/privkey.pem
 ```
 
-### Step 3: Start the services
+### Step 3: Create the `.env` file
+
+Docker Compose reads container UIDs/GIDs from a `.env` file so that Prometheus and Grafana can write to their host bind-mount directories. Copy the template and adjust if needed:
+
+```bash
+cp env.template .env
+```
+
+The defaults match the standard container users (Prometheus = `65534`/nobody, Grafana = `472`/grafana). If your host directories are owned by a different UID/GID, update `.env` accordingly:
+
+```bash
+# Check current ownership
+stat -c '%u:%g' /opt/data/production/services/api-mcp/monitoring/prometheus
+stat -c '%u:%g' /opt/data/production/services/api-mcp/monitoring/grafana
+
+# Then edit .env to match, e.g.:
+# PROMETHEUS_UID=1000
+# PROMETHEUS_GID=1000
+```
+
+### Step 4: Create monitoring data directories
+
+Prometheus and Grafana persist data to host bind-mount directories. Create them and set ownership to match the UIDs in your `.env` before first start:
+
+```bash
+mkdir -p /opt/data/production/services/api-mcp/monitoring/{prometheus,grafana}
+chown 65534:65534 /opt/data/production/services/api-mcp/monitoring/prometheus  # prometheus (nobody)
+chown 472:472 /opt/data/production/services/api-mcp/monitoring/grafana         # grafana
+```
+
+> **Note:** The UIDs above must match `PROMETHEUS_UID`/`GRAFANA_UID` in your `.env` file.
+
+### Step 5: Start the services
 
 ```bash
 docker compose up -d
@@ -183,17 +306,7 @@ This starts four containers:
 - **`fabric-api-prometheus`** — Prometheus metrics collector (internal only, 30-day retention)
 - **`fabric-api-grafana`** — Grafana dashboards (exposed via NGINX at `/grafana/`)
 
-### Step 4: Create monitoring data directories
-
-Prometheus and Grafana persist data to NFS-backed volumes. Create the directories and set ownership before first start:
-
-```bash
-mkdir -p /opt/data/production/services/api-mcp/monitoring/{prometheus,grafana}
-chown 65534:65534 /opt/data/production/services/api-mcp/monitoring/prometheus  # prometheus (nobody)
-chown 472:472 /opt/data/production/services/api-mcp/monitoring/grafana         # grafana
-```
-
-### Step 5: Verify
+### Step 6: Verify
 
 ```bash
 # Check containers are running
@@ -263,6 +376,7 @@ services:
     image: prom/prometheus:latest
     container_name: fabric-api-prometheus
     restart: always
+    user: "${PROMETHEUS_UID:-65534}:${PROMETHEUS_GID:-65534}"
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
@@ -277,6 +391,7 @@ services:
     image: grafana/grafana:latest
     container_name: fabric-api-grafana
     restart: always
+    user: "${GRAFANA_UID:-472}:${GRAFANA_GID:-472}"
     networks:
       - frontend
     # No ports exposed — accessed via NGINX at /grafana/
@@ -352,6 +467,8 @@ server {
 
 Local mode runs the MCP server on your machine using your FABRIC token file and environment — no remote server required. The server reads credentials from your `fabric_rc` file and supports all tools including `post_boot_config` (SSH into VMs).
 
+> **Quick install:** `curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local` — automates all the steps below.
+
 ### Step 1: Create a Python virtual environment
 
 Requires Python 3.11+ (tested with 3.13 and 3.14).
@@ -366,13 +483,13 @@ You can place the venv anywhere — just remember the path for later steps.
 ### Step 2: Install the package
 
 ```bash
-pip install git+https://github.com/fabric-testbed/fabric-mcp.git
+pip install git+https://github.com/fabric-testbed/fabric_api_mcp.git
 ```
 
 Or clone and install in development mode:
 
 ```bash
-git clone https://github.com/fabric-testbed/fabric-mcp.git
+git clone https://github.com/fabric-testbed/fabric_api_mcp.git
 cd fabric-mcp
 pip install -e .
 ```
@@ -427,7 +544,7 @@ Otherwise, download it:
 
 ```bash
 curl -o ~/fabric-api-local.sh \
-  https://raw.githubusercontent.com/fabric-testbed/fabric-mcp/main/scripts/fabric-api-local.sh
+  https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/scripts/fabric-api-local.sh
 chmod +x ~/fabric-api-local.sh
 ```
 
@@ -461,62 +578,15 @@ You should see the MCP server start in stdio mode. Press `Ctrl+C` to stop.
 
 ### Step 7: Configure your MCP client
 
-#### Claude Code CLI
-
-Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (per-project):
-
-```json
-{
-  "mcpServers": {
-    "fabric-api": {
-      "command": "/path/to/scripts/fabric-api-local.sh"
-    }
-  }
-}
-```
-
-Or add via the CLI:
-
-```bash
-claude mcp add fabric-api /path/to/scripts/fabric-api-local.sh
-```
-
-#### Claude Desktop
-
-Edit `claude_desktop_config.json` (Settings → Developer → Edit Config):
-
-```json
-{
-  "mcpServers": {
-    "fabric-api": {
-      "command": "/path/to/scripts/fabric-api-local.sh"
-    }
-  }
-}
-```
-
-#### VS Code
-
-Add to `.mcp.json` in your project root (or workspace settings):
-
-```json
-{
-  "servers": {
-    "fabric-api": {
-      "type": "stdio",
-      "command": "/path/to/scripts/fabric-api-local.sh"
-    }
-  }
-}
-```
-
-> Replace `/path/to/scripts/` with `~/fabric-api-local.sh` (if downloaded) or the full path to your cloned repo's `scripts/` directory.
+See [MCP client configuration](#mcp-client-configuration) — use the path to your `fabric-api-local.sh` script as `<SCRIPT>`.
 
 ---
 
 ## Remote mode setup
 
 Remote mode connects to a Docker Compose-deployed MCP server over HTTPS. It uses `mcp-remote` to bridge stdio to the remote endpoint and sends a Bearer token with each request. No Python venv or local FABRIC libraries needed.
+
+> **Quick install:** `curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --remote` — automates all the steps below.
 
 ### Step 1: Install prerequisites
 
@@ -555,7 +625,7 @@ Otherwise, download it:
 
 ```bash
 curl -o ~/fabric-api.sh \
-  https://raw.githubusercontent.com/fabric-testbed/fabric-mcp/main/scripts/fabric-api.sh
+  https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/scripts/fabric-api.sh
 chmod +x ~/fabric-api.sh
 ```
 
@@ -580,56 +650,7 @@ The script reads your token and connects to the remote MCP server via `mcp-remot
 
 ### Step 6: Configure your MCP client
 
-#### Claude Code CLI
-
-Add to `~/.claude/settings.json` (global) or `.claude/settings.json` (per-project):
-
-```json
-{
-  "mcpServers": {
-    "fabric-api": {
-      "command": "/path/to/scripts/fabric-api.sh"
-    }
-  }
-}
-```
-
-Or add via the CLI:
-
-```bash
-claude mcp add fabric-api /path/to/scripts/fabric-api.sh
-```
-
-#### Claude Desktop
-
-Edit `claude_desktop_config.json` (Settings → Developer → Edit Config):
-
-```json
-{
-  "mcpServers": {
-    "fabric-api": {
-      "command": "/path/to/scripts/fabric-api.sh"
-    }
-  }
-}
-```
-
-#### VS Code
-
-Add to `.mcp.json` in your project root (or workspace settings):
-
-```json
-{
-  "servers": {
-    "fabric-api": {
-      "type": "stdio",
-      "command": "/path/to/scripts/fabric-api.sh"
-    }
-  }
-}
-```
-
-> Replace `/path/to/scripts/` with `~/fabric-api.sh` (if downloaded) or the full path to your cloned repo's `scripts/` directory.
+See [MCP client configuration](#mcp-client-configuration) — use the path to your `fabric-api.sh` script as `<SCRIPT>`.
 
 ---
 
@@ -946,7 +967,7 @@ Prometheus and Grafana containers can still run but will have no data to scrape.
 - **Change Grafana password**: The default `admin`/`admin` is for development only. Set `GF_SECURITY_ADMIN_PASSWORD` to a strong password or use environment-specific secrets.
 - **No exposed ports**: Prometheus and Grafana have no ports exposed to the host. Grafana is served through NGINX at `/grafana/`. Prometheus is accessible only from within the Docker network.
 - **Data retention**: Prometheus is configured with 30-day retention (`--storage.tsdb.retention.time=30d`). Estimated disk usage is ~100-500 MB for 30 days depending on user/tool cardinality.
-- **NFS persistence**: Prometheus and Grafana data directories are bind-mounted to `/opt/data/production/services/api-mcp/monitoring/`. Ensure proper ownership (Prometheus: UID 65534, Grafana: UID 472).
+- **NFS persistence**: Prometheus and Grafana data directories are bind-mounted to `/opt/data/production/services/api-mcp/monitoring/`. Container UIDs are configured via `.env` (copy from `env.template`). Ensure host directory ownership matches the UIDs in your `.env` file.
 - **Client IP forwarding**: NGINX forwards the real client IP via `X-Real-IP` and `X-Forwarded-For` headers. These must be set inside each `location` block (NGINX does not inherit `proxy_set_header` from the server block when a location defines its own).
 - **Alerting**: Add Prometheus alerting rules (e.g., alert on auth failure spikes, error rate > 5%) and configure Grafana notification channels (email, Slack, PagerDuty).
 
