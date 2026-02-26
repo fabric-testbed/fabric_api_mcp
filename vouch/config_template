@@ -16,9 +16,11 @@ vouch:
         secret: DUMMY_SECRET
 
     cookie:
-        secure: true
-        domain: VOUCH_HOSTNAME
-        name: fabric-api-mcp
+        # allow the jwt/cookie to be set into http://yourdomain.com (defaults to true, requiring https://yourdomain.com)
+        secure: false
+        # vouch.cookie.domain must be set when enabling allowAllUsers
+        domain: fabric-testbed.net
+        name: fabric-service
 
     headers:
         jwt: X-Vouch-Token
