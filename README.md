@@ -656,8 +656,9 @@ Add to `.mcp.json` in your project root (or workspace settings):
 | L3 (FABNetv4, FABNetv6) | Orchestrator assigns | Assign from orchestrator's subnet |
 | L3 Ext (FABNetv4Ext, FABNetv6Ext) | Orchestrator assigns | Use `make-ip-publicly-routable`, configure **returned** IP |
 
-- **FABNetv4Ext**: IPv4 subnet is **shared** across all slices at the site. Requested IP may be in use; orchestrator returns actual available IP. Always use the **returned** `public_ips` value.
+- **FABNetv4Ext**: IPv4 subnet is **shared** across all slices at the site. Requested IP may be in use; orchestrator returns actual available IP. After calling `make-ip-publicly-routable`, always re-fetch with `get-network-info` and use the **returned** `public_ips` value.
 - **FABNetv6Ext**: Entire IPv6 subnet is **dedicated** to your slice. Any IP from the subnet can be requested.
+- **After modify**: When adding FABNetv4Ext/FABNetv6Ext via `modify-slice-resources`, wait for `ModifyOK` state before fetching network info and enabling public routing.
 
 **SSH Access to VMs**
 
