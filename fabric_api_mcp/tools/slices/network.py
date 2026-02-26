@@ -188,14 +188,18 @@ async def make_ip_publicly_routable(
         - subnet: Network subnet
 
     Note:
-        - Only works with FABNetv4Ext and FABNetv6Ext network types
+        - Only works with FABNetv4Ext and FABNetv6Ext network types.
+        - This submits a slice modification (wait=False). Wait for the slice to
+          reach **ModifyOK** state, then call ``fabric_get_network_info`` to
+          re-fetch the actual assigned public IPs — the orchestrator may change
+          the requested IP (especially for FABNetv4Ext where the subnet is shared).
 
     IPv4Ext vs IPv6Ext behavior:
         - **FABNetv4Ext**: The IPv4 subnet is SHARED across all slices at a site.
           Due to limited IPv4 address space, requested IPs may already be in use.
           If the requested IP is unavailable, the orchestrator returns the next
-          available IP. The returned public_ips in the response is the actual IP
-          assigned - configure THIS IP inside your VM.
+          available IP. Always re-fetch via ``fabric_get_network_info`` after
+          ModifyOK and configure the **returned** IP inside your VM.
 
         - **FABNetv6Ext**: The entire IPv6 subnet is allocated to YOUR slice.
           Any IP from the subnet can be requested and made public. You have
@@ -238,6 +242,9 @@ async def get_network_info(
 
     Useful for checking available IPs before making them publicly routable,
     or for getting the gateway and subnet information for manual IP configuration.
+    Also call this **after** ``fabric_make_ip_routable`` once the slice reaches
+    ModifyOK — the orchestrator may assign a different IP than requested
+    (especially for FABNetv4Ext). Always use the returned ``public_ips``.
 
     Args:
         network_name: Name of the network.
