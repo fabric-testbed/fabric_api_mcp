@@ -339,12 +339,12 @@ print_summary() {
   echo ""
   echo "  Install directory:  $INSTALL_DIR"
   echo "  Venv:     $VENV_DIR"
-  echo "  Config:   $CONFIG_DIR"
-  if [[ -n "$CONFIGURED_PROJECT_ID" ]]; then
-    echo "  Project:  $CONFIGURED_PROJECT_ID"
-  fi
 
   if $INSTALL_LOCAL; then
+    echo "  Config:   $CONFIG_DIR"
+    if [[ -n "$CONFIGURED_PROJECT_ID" ]]; then
+      echo "  Project:  $CONFIGURED_PROJECT_ID"
+    fi
     echo ""
     echo "  --- Local mode ---"
     echo "  Script:   $BIN_DIR/fabric-api-local.sh"
@@ -388,16 +388,18 @@ JSONEOF
   echo ""
   echo "  Next steps:"
   local step=1
-  if [[ ! -f "$CONFIG_DIR/fabric_rc" ]]; then
+  if $INSTALL_LOCAL && [[ ! -f "$CONFIG_DIR/fabric_rc" ]]; then
     echo "    $step. Run: $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR"
     step=$((step + 1))
   fi
   echo "    $step. Add the MCP server to your client (see config above)"
 
-  echo ""
-  echo "  To change your FABRIC project:"
-  echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectname <name>"
-  echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectid <uuid>"
+  if $INSTALL_LOCAL; then
+    echo ""
+    echo "  To change your FABRIC project:"
+    echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectname <name>"
+    echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectid <uuid>"
+  fi
 
   echo ""
   echo "  To refresh your token:"
@@ -417,10 +419,9 @@ main() {
   # Always install Python venv + fabric_api_mcp (provides fabric-cli)
   setup_venv
 
-  # Always run configure (creates fabric_rc, tokens, SSH keys)
-  setup_configure
-
   if $INSTALL_LOCAL; then
+    # Configure fabric_rc, tokens, SSH keys (local mode only)
+    setup_configure
     setup_local
   fi
 
