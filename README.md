@@ -198,7 +198,9 @@ FABRIC Provisioning MCP Server (FastMCP + FastAPI)
 │  └─ fabric-api-local.sh    # local/stdio mode launcher
 ├─ nginx/
 │  ├─ nginx.conf
-│  └─ default.conf           # reverse proxy to mcp-server
+│  └─ default.conf           # reverse proxy to mcp-server (OpenResty + Lua)
+├─ vouch/
+│  └─ config                 # Vouch Proxy config (CILogon OIDC)
 ├─ ssl/
 │  ├─ fullchain.pem
 │  └─ privkey.pem
@@ -300,11 +302,12 @@ chown 472:472 /opt/data/production/services/api-mcp/monitoring/grafana         #
 docker compose up -d
 ```
 
-This starts four containers:
+This starts five containers:
 - **`fabric-api-mcp`** — the MCP server (port 5000, internal only)
-- **`fabric-api-nginx`** — NGINX reverse proxy (port 443, public)
+- **`fabric-api-nginx`** — OpenResty reverse proxy (port 443, public)
 - **`fabric-api-prometheus`** — Prometheus metrics collector (internal only, 30-day retention)
-- **`fabric-api-grafana`** — Grafana dashboards (exposed via NGINX at `/grafana/`)
+- **`fabric-api-grafana`** — Grafana dashboards (exposed via NGINX at `/grafana/`, protected by Vouch Proxy)
+- **`fabric-api-vouch`** — Vouch Proxy for CILogon OIDC authentication (internal only)
 
 ### Step 6: Verify
 
@@ -332,7 +335,7 @@ docker compose exec mcp-server curl -s http://localhost:5000/metrics | head -20
 | Service | URL | Access |
 |---------|-----|--------|
 | MCP endpoint | `https://<your-host>/mcp` | Bearer token required |
-| Grafana | `https://<your-host>/grafana/` | `admin` / `admin` (change on first login) |
+| Grafana | `https://<your-host>/grafana/` | CILogon login (requires `facility-operators` or `facility-viewers` role) |
 | Prometheus | Internal only (Docker network) | Via `docker compose exec prometheus ...` |
 
 ### docker-compose.yml
@@ -357,7 +360,7 @@ services:
       - ./mcp-logs:/var/log/mcp
 
   nginx:
-    image: library/nginx:1
+    image: openresty/openresty:latest
     container_name: fabric-api-nginx
     networks:
       - frontend
@@ -366,11 +369,20 @@ services:
       - 443:443
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf
       - ./ssl/fullchain.pem:/etc/ssl/public.pem    # ← update path to your cert
       - ./ssl/privkey.pem:/etc/ssl/private.pem      # ← update path to your key
       - ./nginx-logs:/var/log/nginx
     restart: always
+
+  vouch-proxy:
+    image: fabrictestbed/vouch-proxy:0.27.1
+    container_name: fabric-api-vouch
+    restart: always
+    networks:
+      - frontend
+    volumes:
+      - ./vouch:/config
 
   prometheus:
     image: prom/prometheus:latest
@@ -400,6 +412,8 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_SERVER_ROOT_URL: "https://%(domain)s/grafana/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -857,7 +871,7 @@ After `docker compose up -d`:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Grafana | `https://<your-host>/grafana/` | `admin` / `admin` |
+| Grafana | `https://<your-host>/grafana/` | CILogon login (requires `facility-operators` or `facility-viewers` role) |
 | Prometheus | Internal only | `docker compose exec prometheus ...` |
 
 In Grafana, the **FABRIC MCP** dashboard is auto-provisioned and available immediately.
@@ -962,9 +976,40 @@ Set `METRICS_ENABLED=0` in the MCP server environment. This disables:
 
 Prometheus and Grafana containers can still run but will have no data to scrape.
 
+### Grafana authentication (Vouch Proxy + CILogon)
+
+Grafana is protected by [Vouch Proxy](https://github.com/vouch/vouch-proxy) using CILogon OIDC. Only users with `facility-operators` or `facility-viewers` roles (from the CILogon `isMemberOf` claim) can access dashboards. NGINX uses OpenResty's Lua to decode the ID token and check roles at the reverse-proxy layer.
+
+**Setup:**
+
+1. **Register a CILogon OIDC client** at https://cilogon.org/oauth2/register
+   - Set the callback URL to `https://<your-host>/auth`
+   - Note the `client_id` and `client_secret`
+
+2. **Configure environment variables** in your `.env` file (see `env.template`):
+   ```
+   VOUCH_HOSTNAME=your-mcp-host.fabric-testbed.net
+   CILOGON_CLIENT_ID=your-cilogon-client-id
+   CILOGON_CLIENT_SECRET=your-cilogon-client-secret
+   ```
+
+3. **Update the Vouch config** — replace placeholders in `vouch/config`:
+   - `VOUCH_HOSTNAME` → your server hostname
+   - `CILOGON_CLIENT_ID` / `CILOGON_CLIENT_SECRET` → from step 1
+
+4. **Start services** — `docker compose up -d` now starts 5 containers (adds `vouch-proxy`)
+
+**How it works:**
+- Unauthenticated requests to `/grafana/` are redirected to CILogon login
+- After login, Vouch Proxy sets a session cookie (`fabric-api-mcp`)
+- NGINX's Lua block decodes the JWT ID token and checks `isMemberOf` for `facility-operators` or `facility-viewers`
+- Users without the required roles get a 403 Forbidden response
+- Grafana is configured for anonymous viewer access (auth is enforced at NGINX)
+- The `/mcp` endpoint is **not affected** — it continues using Bearer token auth
+
 ### Production considerations
 
-- **Change Grafana password**: The default `admin`/`admin` is for development only. Set `GF_SECURITY_ADMIN_PASSWORD` to a strong password or use environment-specific secrets.
+- **Grafana access control**: Grafana is protected by Vouch Proxy + CILogon at the NGINX layer. Only users with `facility-operators` or `facility-viewers` roles can access it. Grafana itself uses anonymous viewer access (the admin password is only needed for dashboard editing via CLI).
 - **No exposed ports**: Prometheus and Grafana have no ports exposed to the host. Grafana is served through NGINX at `/grafana/`. Prometheus is accessible only from within the Docker network.
 - **Data retention**: Prometheus is configured with 30-day retention (`--storage.tsdb.retention.time=30d`). Estimated disk usage is ~100-500 MB for 30 days depending on user/tool cardinality.
 - **NFS persistence**: Prometheus and Grafana data directories are bind-mounted to `/opt/data/production/services/api-mcp/monitoring/`. Container UIDs are configured via `.env` (copy from `env.template`). Ensure host directory ownership matches the UIDs in your `.env` file.
