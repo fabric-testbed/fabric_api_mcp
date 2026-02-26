@@ -78,11 +78,28 @@ FABRIC Provisioning MCP Server (FastMCP + FastAPI)
 .
 ├─ fabric_api_mcp/
 │  ├─ __main__.py            # FastMCP entrypoint (`python -m fabric_api_mcp`)
+│  ├─ metrics.py             # Prometheus metric definitions
 │  ├─ resources_cache.py     # background cache
 │  ├─ system.md              # system prompt served via @mcp.prompt("fabric-system")
+│  ├─ middleware/
+│  │  ├─ access_log.py       # HTTP access log middleware
+│  │  ├─ metrics.py          # Prometheus HTTP metrics middleware
+│  │  ├─ rate_limit.py       # rate limiting middleware
+│  │  └─ security_metrics.py # auth failure & IP tracking middleware
 │  └─ tools/
 │     ├─ topology.py         # topology query tools
 │     └─ slices/             # slice tools split by concern
+├─ monitoring/
+│  ├─ prometheus/
+│  │  └─ prometheus.yml      # Prometheus scrape config
+│  └─ grafana/
+│     ├─ dashboards/
+│     │  └─ fabric-mcp.json  # pre-built Grafana dashboard
+│     └─ provisioning/
+│        ├─ datasources/
+│        │  └─ prometheus.yml # auto-configure Prometheus datasource
+│        └─ dashboards/
+│           └─ dashboard.yml  # dashboard provisioning config
 ├─ pyproject.toml             # pip-installable package config
 ├─ requirements.txt
 ├─ Dockerfile
@@ -120,6 +137,7 @@ Server respects these (all optional unless stated):
 | `REFRESH_INTERVAL_SECONDS` | `300` | ResourceCache refresh interval |
 | `CACHE_MAX_FETCH` | `5000` | Cache fetch limit per cycle |
 | `MAX_FETCH_FOR_SORT` | `5000` | Max fetch when client asks to sort |
+| `METRICS_ENABLED` | `1` (server) / `0` (local) | Enable Prometheus metrics + `/metrics` endpoint |
 | `FABRIC_LOCAL_MODE` | `0` | `1` to enable local/stdio mode (no Bearer token required) |
 | `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport (`stdio` or `http`) |
 
@@ -159,9 +177,11 @@ cp /path/to/your/privkey.pem ssl/privkey.pem
 docker compose up -d
 ```
 
-This starts two containers:
+This starts four containers:
 - **`fabric-api-mcp`** — the MCP server (port 5000, internal only)
 - **`fabric-api-nginx`** — NGINX reverse proxy (port 443, public)
+- **`fabric-api-prometheus`** — Prometheus metrics collector (port 9090)
+- **`fabric-api-grafana`** — Grafana dashboards (port 3000)
 
 ### Step 4: Verify
 
@@ -172,8 +192,15 @@ docker compose ps
 # Check health endpoint
 curl -k https://localhost/healthz
 
-# Check logs
+# Check MCP server logs
 docker compose logs -f mcp-server
+
+# Check Prometheus is scraping the MCP server
+curl http://localhost:9090/api/v1/targets
+# fabric-mcp target should show state: "up"
+
+# Check the raw metrics endpoint (internal, not exposed via NGINX)
+docker compose exec mcp-server curl -s http://localhost:5000/metrics | head -20
 ```
 
 The MCP endpoint is available at `https://<your-host>/mcp`.
@@ -215,10 +242,42 @@ services:
       - ./nginx-logs:/var/log/nginx
     restart: always
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fabric-api-prometheus
+    restart: always
+    networks:
+      - frontend
+    ports:
+      - 9090:9090
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: fabric-api-grafana
+    restart: always
+    networks:
+      - frontend
+    ports:
+      - 3000:3000
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
 networks:
   frontend:
   backend:
     internal: true
+
+volumes:
+  prometheus-data:
+  grafana-data:
 ````
 
 ### Minimal NGINX `default.conf`
@@ -735,12 +794,146 @@ This accelerates `query-sites`, `query-hosts`, `query-facility-ports`, `query-li
 
 ---
 
+## Monitoring & Metrics (Server Mode Only)
+
+The MCP server includes built-in Prometheus metrics and a pre-configured Grafana dashboard. Metrics are **enabled by default in server mode** and **disabled in local mode**. Override with `METRICS_ENABLED=0` or `METRICS_ENABLED=1`.
+
+### Architecture
+
+```
+MCP Server (:5000/metrics)  ←── Prometheus (:9090) scrapes every 15s
+                                       ↓
+                                 Grafana (:3000) queries Prometheus
+```
+
+- `/metrics` is on the internal Docker network only — **not** exposed through NGINX
+- Prometheus and Grafana are on the `frontend` Docker network alongside the MCP server
+
+### Accessing the dashboards
+
+After `docker compose up -d`:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Prometheus | http://localhost:9090 | None |
+| Grafana | http://localhost:3000 | `admin` / `admin` |
+
+In Grafana, the **FABRIC MCP** dashboard is auto-provisioned and available immediately.
+
+### Available metrics
+
+#### HTTP metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mcp_http_requests_total` | Counter | `method`, `path`, `status` | Total HTTP requests |
+| `mcp_http_request_duration_seconds` | Histogram | `method`, `path` | Request latency |
+| `mcp_http_requests_in_progress` | Gauge | `method` | Currently active requests |
+
+#### Tool metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mcp_tool_calls_total` | Counter | `tool`, `user_sub`, `status` | Tool calls (who called what) |
+| `mcp_tool_call_duration_seconds` | Histogram | `tool` | Tool execution latency |
+
+#### Per-user / access log metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mcp_requests_by_user_total` | Counter | `user_sub` | Total requests per user |
+| `mcp_requests_by_user_path_total` | Counter | `user_sub`, `method`, `path` | Per-user per-endpoint breakdown |
+| `mcp_rate_limit_hits_total` | Counter | `key_type` | Rate limit 429 responses |
+
+#### Security metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mcp_auth_failures_total` | Counter | `reason`, `client_ip` | Auth failures by reason and source IP |
+| `mcp_auth_success_total` | Counter | `user_sub`, `client_ip` | Successful auth by user + IP |
+| `mcp_requests_by_ip_total` | Counter | `client_ip` | All requests by source IP |
+
+Auth failure reasons: `missing_token`, `malformed_header`, `invalid_jwt`, `expired_token`.
+
+### Grafana dashboard panels
+
+The pre-built **FABRIC MCP** dashboard includes 15 panels:
+
+**Operations:**
+- Request rate (total / 5xx / 429)
+- Request latency percentiles (p50, p95, p99)
+- Active requests gauge
+- Error rate percentage
+- Rate limit hits over time
+
+**Tool usage:**
+- Tool call rate by tool name
+- Tool latency by tool (p95)
+- Tool errors by tool
+- Tool calls by user (who called which tool)
+
+**Access log / user activity:**
+- Top users by total request count
+- Requests by user + endpoint
+- Top client IPs by request volume
+
+**Security:**
+- Auth failures by reason (stacked time series)
+- Auth failures by IP (table — spot brute-force or overseas probing)
+- User-to-IP mapping (table — spot token reuse from unexpected locations)
+
+### Example Prometheus queries
+
+```promql
+# Request rate over last 5 minutes
+sum(rate(mcp_http_requests_total[5m]))
+
+# p95 latency for all tool calls
+histogram_quantile(0.95, sum(rate(mcp_tool_call_duration_seconds_bucket[5m])) by (le, tool))
+
+# Which tools did a specific user call?
+sum(mcp_tool_calls_total{user_sub="some-user-uuid"}) by (tool)
+
+# Auth failures from a specific IP in the last hour
+sum(increase(mcp_auth_failures_total{client_ip="203.0.113.42"}[1h]))
+
+# Users authenticating from multiple IPs (possible token sharing)
+count(mcp_auth_success_total) by (user_sub) > 3
+
+# Top 10 users by request count in the last 24h
+topk(10, sum(increase(mcp_requests_by_user_total[24h])) by (user_sub))
+```
+
+### Disabling metrics
+
+Set `METRICS_ENABLED=0` in the MCP server environment. This disables:
+- The `/metrics` endpoint
+- All Prometheus metric collection (HTTP, tool, security)
+- The `prometheus-client` library is never imported (zero overhead)
+
+Prometheus and Grafana containers can still run but will have no data to scrape.
+
+### Production considerations
+
+- **Change Grafana password**: The default `admin`/`admin` is for development only. Set `GF_SECURITY_ADMIN_PASSWORD` to a strong password or use environment-specific secrets.
+- **Restrict port access**: Prometheus (9090) and Grafana (3000) are bound to all interfaces by default. In production, bind to `127.0.0.1` or put them behind a firewall:
+  ```yaml
+  ports:
+    - 127.0.0.1:9090:9090  # Prometheus
+    - 127.0.0.1:3000:3000  # Grafana
+  ```
+- **Data retention**: Prometheus default retention is 15 days. Adjust with `--storage.tsdb.retention.time=90d` in the Prometheus command.
+- **Alerting**: Add Prometheus alerting rules (e.g., alert on auth failure spikes, error rate > 5%) and configure Grafana notification channels (email, Slack, PagerDuty).
+
+---
+
 ## Security notes
 
 * Tokens are accepted only via **Authorization header**; they are **not stored**.
 * Do not print tokens in logs. (Server code avoids this.)
 * Terminate TLS at NGINX; keep the MCP service on an internal network.
 * Rotate TLS certs and restrict `client_max_body_size` if desired.
+* **Auth monitoring**: Prometheus tracks auth failures (missing/malformed/invalid/expired tokens) by client IP, and successful auth by user+IP pair. Use the Grafana security panels or Prometheus queries to detect brute-force attempts, overseas probing, and token reuse from unexpected locations.
 
 ---
 

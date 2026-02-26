@@ -3,9 +3,44 @@ Authentication utilities for Bearer token extraction and validation.
 """
 from __future__ import annotations
 
+import base64
 import json
+import logging
 import os
 from typing import Dict, Optional
+
+log = logging.getLogger("fabric.mcp")
+
+
+def decode_token_claims(token: str) -> Dict[str, str]:
+    """
+    Base64-decode the JWT payload (middle segment) without cryptographic verification.
+
+    Upstream FABRIC APIs handle token validation; this is only for extracting
+    user identity claims for logging purposes.
+
+    Args:
+        token: A JWT string (header.payload.signature)
+
+    Returns:
+        Dict with 'sub', 'email', 'name' claims if present, or {} on failure.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return {}
+        # Add padding for base64url decoding
+        payload_b64 = parts[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return {
+            k: payload[k]
+            for k in ("sub", "email", "name")
+            if k in payload
+        }
+    except Exception:
+        log.debug("Failed to decode JWT claims", exc_info=True)
+        return {}
 
 
 def extract_bearer_token(headers: Dict[str, str]) -> Optional[str]:
