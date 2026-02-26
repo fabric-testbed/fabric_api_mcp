@@ -683,8 +683,8 @@ Users can always configure networking manually, even in local mode.
 
 ### FABNetv4Ext/FABNetv6Ext Public IP Workflow
 
-1. **Create slice** with FABNetv4Ext/FABNetv6Ext network (via `fabric_build_slice`)
-2. **Wait for slice** to reach `StableOK` state
+1. **Create slice** with FABNetv4Ext/FABNetv6Ext network (via `fabric_build_slice`) or add via `fabric_modify_slice`
+2. **Wait for slice** to reach `StableOK` state (new slice) or `ModifyOK` state (modify)
 3. **Get network info** to see available IPs:
    ```json
    {"tool": "fabric_get_network_info", "params": {"slice_name": "my-slice", "network_name": "net1"}}
@@ -694,9 +694,13 @@ Users can always configure networking manually, even in local mode.
    {"tool": "fabric_make_ip_routable", "params": {"slice_name": "my-slice", "network_name": "net1"}}
    ```
    If no IP is specified, the first available IP is used.
-5. **Configure node** with the **returned** `public_ips` value (via SSH or `fabric_post_boot_config`)
+5. **Re-fetch network info** — the orchestrator may assign a different IP than requested (especially FABNetv4Ext where the subnet is shared):
+   ```json
+   {"tool": "fabric_get_network_info", "params": {"slice_name": "my-slice", "network_name": "net1"}}
+   ```
+6. **Configure node** with the **returned** `public_ips` value (via SSH or `fabric_post_boot_config`)
 
-**Important for FABNetv4Ext:** The requested IP may already be in use by another slice. The orchestrator returns the actual assigned IP in `public_ips`. Always configure the **returned** IP inside your VM, not the requested one.
+**Important for FABNetv4Ext:** The requested IP may already be in use by another slice. The orchestrator returns the actual assigned IP in `public_ips`. Always re-fetch and configure the **returned** IP inside your VM, not the requested one.
 
 ### Modifying Existing Slices (modify-slice-resources)
 
