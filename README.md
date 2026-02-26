@@ -37,10 +37,10 @@ A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC
 Set up FABRIC MCP with a single command:
 
 ```bash
-# Local mode (full-featured: Python venv, SSH to VMs, post-boot config)
+# Local mode (full-featured: SSH to VMs, post-boot config)
 curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local
 
-# Remote mode (lightweight: just jq + Node.js, no Python venv needed)
+# Remote mode (connects to remote MCP server via mcp-remote)
 curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --remote
 
 # Both modes
@@ -620,13 +620,13 @@ See [MCP client configuration](#mcp-client-configuration) — use the path to yo
 
 ## Remote mode setup
 
-Remote mode connects to a Docker Compose-deployed MCP server over HTTPS. It uses `mcp-remote` to bridge stdio to the remote endpoint and sends a Bearer token with each request. No Python venv or local FABRIC libraries needed.
+Remote mode connects to a Docker Compose-deployed MCP server over HTTPS. It uses `mcp-remote` to bridge stdio to the remote endpoint and sends a Bearer token with each request.
 
-> **Quick install:** `curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --remote` — automates all the steps below.
+> **Quick install:** `curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --remote` — automates all the steps below. The installer sets up a Python venv with `fabric_api_mcp` + `fabric-cli` (for token management), then installs `jq` and Node.js.
 
 ### Step 1: Install prerequisites
 
-The remote script requires `jq` and `npx` (`mcp-remote`):
+Remote mode requires Python 3.11+ (for the venv with `fabric-cli`), plus `jq` and `npx` (`mcp-remote`):
 
 ```bash
 # macOS
@@ -636,26 +636,35 @@ brew install jq node
 sudo apt install jq nodejs npm
 ```
 
-### Step 2: Create your token
+### Step 2: Set up the venv
 
-Create a FABRIC token using `fabric-cli`. If you installed local mode (which includes `fabric-cli` in the venv), use the venv's binary:
+Create a Python venv and install `fabric_api_mcp` (which includes `fabric-cli`):
+
+```bash
+python3 -m venv ~/fabric-mcp-venv
+~/fabric-mcp-venv/bin/pip install git+https://github.com/fabric-testbed/fabric_api_mcp.git
+```
+
+### Step 3: Create your token
+
+Use the venv's `fabric-cli` to create a token:
 
 ```bash
 mkdir -p ~/work/claude
-~/.fabric-api-mcp/venv/bin/fabric-cli tokens create --tokenlocation ~/work/claude/id_token.json
+~/fabric-mcp-venv/bin/fabric-cli tokens create --tokenlocation ~/work/claude/id_token.json
 ```
 
 This opens a browser for CILogon authentication, then saves the token automatically.
 
 > If running on a remote/headless VM, add `--no-browser` and follow the printed URL manually. Press `Ctrl+C` after login and paste the authorization code.
 
-> If you don't have local mode installed, you can install `fabric-cli` separately (`pip install fabric-cli`) or download your token manually from the [FABRIC Portal → Experiments → Manage Tokens](https://portal.fabric-testbed.net/experiments#manageTokens):
->
-> ```bash
-> cp /path/to/downloaded/token.json ~/work/claude/id_token.json
-> ```
+Alternatively, download your token from the [FABRIC Portal → Experiments → Manage Tokens](https://portal.fabric-testbed.net/experiments#manageTokens):
 
-### Step 3: Get the helper script
+```bash
+cp /path/to/downloaded/token.json ~/work/claude/id_token.json
+```
+
+### Step 4: Get the helper script
 
 If you cloned the repo, the script is already at `scripts/fabric-api.sh`.
 
@@ -667,7 +676,7 @@ curl -o ~/fabric-api.sh \
 chmod +x ~/fabric-api.sh
 ```
 
-### Step 4: Configure the script
+### Step 5: Configure the script
 
 Update these if your paths or server URL differ from the defaults:
 
@@ -676,7 +685,7 @@ Update these if your paths or server URL differ from the defaults:
 | `FABRIC_TOKEN_JSON` | `~/work/claude/id_token.json` | Path to JSON file containing `{"id_token": "..."}` |
 | `FABRIC_MCP_URL` | `https://alpha-5.fabric-testbed.net/mcp` | URL of the remote MCP server |
 
-### Step 5: Test
+### Step 6: Test
 
 ```bash
 ~/fabric-api.sh
@@ -686,7 +695,7 @@ Update these if your paths or server URL differ from the defaults:
 
 The script reads your token and connects to the remote MCP server via `mcp-remote`.
 
-### Step 6: Configure your MCP client
+### Step 7: Configure your MCP client
 
 See [MCP client configuration](#mcp-client-configuration) — use the path to your `fabric-api.sh` script as `<SCRIPT>`.
 
@@ -701,8 +710,8 @@ See [MCP client configuration](#mcp-client-configuration) — use the path to yo
 | **Transport** | stdio (direct) | stdio via `mcp-remote` → HTTPS |
 | **Server** | Runs locally (no Docker needed) | Docker Compose-deployed server |
 | **Post-boot config** | Supported (SSH access to VMs) | Not available |
-| **Dependencies** | Python venv + `fabric_api_mcp` | `jq` + `npx mcp-remote` |
-| **Best for** | Full-featured local development | Lightweight remote access |
+| **Dependencies** | Python venv + `fabric_api_mcp` | Python venv + `fabric_api_mcp` + `jq` + `npx mcp-remote` |
+| **Best for** | Full-featured local development | Remote access to shared server |
 
 ---
 
