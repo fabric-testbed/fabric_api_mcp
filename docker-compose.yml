@@ -21,7 +21,10 @@ services:
       - ./mcp-logs:/var/log/mcp # Optional: for application logs
 
   nginx:
-    image: openresty/openresty:latest
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: fabric-api-openresty:latest
     container_name: fabric-api-nginx
     networks:
       - frontend
