@@ -20,6 +20,8 @@ dependencies = [
     "requests",
     "fabrictestbed_extensions==2.0.0rc3",
     "fastmcp",
+    "slowapi",
+    "prometheus-client",
 ]
 
 classifiers = [

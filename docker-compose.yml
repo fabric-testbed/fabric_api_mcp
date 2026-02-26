@@ -36,7 +36,39 @@ services:
       - ./nginx-logs:/var/log/nginx
     restart: always
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fabric-api-prometheus
+    restart: always
+    networks:
+      - frontend
+    ports:
+      - 9090:9090
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: fabric-api-grafana
+    restart: always
+    networks:
+      - frontend
+    ports:
+      - 3000:3000
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
 networks:
   frontend:
   backend:
     internal: true
+
+volumes:
+  prometheus-data:
+  grafana-data:

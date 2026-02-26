@@ -35,6 +35,13 @@ class ServerConfig:
     cache_max_fetch: int
     max_fetch_for_sort: int
 
+    # Rate limiting (server mode)
+    rate_limit: str
+    rate_limit_enabled: bool
+
+    # Metrics
+    metrics_enabled: bool
+
     # Local mode settings
     local_mode: bool
     transport: str
@@ -65,6 +72,16 @@ class ServerConfig:
             refresh_interval_seconds=int(os.environ.get("REFRESH_INTERVAL_SECONDS", "300")),  # 5 minutes
             cache_max_fetch=int(os.environ.get("CACHE_MAX_FETCH", "5000")),
             max_fetch_for_sort=int(os.environ.get("MAX_FETCH_FOR_SORT", "5000")),
+
+            # Rate limiting (server mode)
+            rate_limit=os.environ.get("RATE_LIMIT", "60/minute"),
+            rate_limit_enabled=os.environ.get("RATE_LIMIT_ENABLED", "0" if is_local else "1")
+                               not in ("0", "false", "False", ""),
+
+            # Metrics
+            metrics_enabled=os.environ.get(
+                "METRICS_ENABLED", "0" if is_local else "1"
+            ) not in ("0", "false", "False", ""),
 
             # Local mode settings
             local_mode=is_local,

@@ -32,7 +32,8 @@ class JsonFormatter(logging.Formatter):
             "msg": record.getMessage(),
         }
         # Include extra fields if present (for request tracing and performance metrics)
-        for k in ("request_id", "tool", "path", "method", "status", "duration_ms", "client"):
+        for k in ("request_id", "tool", "path", "method", "status", "duration_ms", "client",
+                  "user_sub", "user_email", "client_ip"):
             if hasattr(record, k):
                 base[k] = getattr(record, k)
         if record.exc_info:

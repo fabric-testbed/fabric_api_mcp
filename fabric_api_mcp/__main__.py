@@ -29,6 +29,9 @@ from fabric_api_mcp.log_helper.config import configure_logging
 from fabric_api_mcp.dependencies import fabric_manager_factory
 from fabric_api_mcp.errors.handlers import register_error_handlers
 from fabric_api_mcp.middleware.access_log import register_middleware
+from fabric_api_mcp.middleware.metrics import register_metrics_middleware
+from fabric_api_mcp.middleware.rate_limit import register_rate_limiter
+from fabric_api_mcp.middleware.security_metrics import register_security_metrics_middleware
 from fabric_api_mcp.resources_cache import ResourceCache
 
 # Import log_helper and configure
@@ -71,8 +74,24 @@ mcp = FastMCP(
 # ---------------------------------------
 if config.transport == "http":
     register_middleware(mcp)
+    if config.metrics_enabled:
+        register_metrics_middleware(mcp)
+        register_security_metrics_middleware(mcp)
     if hasattr(mcp, "app") and mcp.app:
         register_error_handlers(mcp.app)
+        register_rate_limiter(mcp.app)
+
+        # Prometheus /metrics endpoint
+        if config.metrics_enabled:
+            from starlette.responses import Response
+            from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+            @mcp.app.get("/metrics", include_in_schema=False)
+            async def prometheus_metrics():
+                return Response(
+                    content=generate_latest(),
+                    media_type=CONTENT_TYPE_LATEST,
+                )
 
 # ---------------------------------------
 # Background Resource Cache
