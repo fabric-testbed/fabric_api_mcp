@@ -19,6 +19,7 @@ import asyncio
 import atexit
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -27,11 +28,7 @@ from fastmcp import FastMCP
 from fabric_api_mcp.config import config
 from fabric_api_mcp.log_helper.config import configure_logging
 from fabric_api_mcp.dependencies import fabric_manager_factory
-from fabric_api_mcp.errors.handlers import register_error_handlers
-from fabric_api_mcp.middleware.access_log import register_middleware
-from fabric_api_mcp.middleware.metrics import register_metrics_middleware
-from fabric_api_mcp.middleware.rate_limit import register_rate_limiter
-from fabric_api_mcp.middleware.security_metrics import register_security_metrics_middleware
+from fabric_api_mcp.middleware.access_log import AccessLogMiddleware
 from fabric_api_mcp.resources_cache import ResourceCache
 
 # Import log_helper and configure
@@ -61,48 +58,12 @@ from fabric_api_mcp.tools.projects import (
 config.print_startup_info()
 
 # ---------------------------------------
-# MCP App Initialization
-# ---------------------------------------
-mcp = FastMCP(
-    name="fabric-mcp-proxy",
-    instructions="Proxy for accessing FABRIC API data via LLM tool calls.",
-    version="2.0.0",
-)
-
-# ---------------------------------------
-# Register Middleware & Error Handlers (HTTP only)
-# ---------------------------------------
-if config.transport == "http":
-    register_middleware(mcp)
-    if config.metrics_enabled:
-        register_metrics_middleware(mcp)
-        register_security_metrics_middleware(mcp)
-    if hasattr(mcp, "app") and mcp.app:
-        register_error_handlers(mcp.app)
-        register_rate_limiter(mcp.app)
-
-        # Prometheus /metrics endpoint
-        if config.metrics_enabled:
-            from starlette.responses import Response
-            from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-
-            @mcp.app.get("/metrics", include_in_schema=False)
-            async def prometheus_metrics():
-                return Response(
-                    content=generate_latest(),
-                    media_type=CONTENT_TYPE_LATEST,
-                )
-
-# ---------------------------------------
 # Background Resource Cache
 # ---------------------------------------
 CACHE = ResourceCache(
     interval_seconds=config.refresh_interval_seconds,
     max_fetch=config.cache_max_fetch,
 )
-
-# Wire cache to topology tools
-topology.set_cache(CACHE)
 
 
 def _fm_factory_for_cache():
@@ -127,11 +88,63 @@ async def _on_shutdown():
     await CACHE.stop()
 
 
-# Wire up lifecycle handlers (HTTP uses ASGI events; stdio uses manual start/atexit)
+@asynccontextmanager
+async def _cache_lifespan(server: FastMCP):
+    """FastMCP lifespan: start/stop the resource cache."""
+    await _on_startup()
+    try:
+        yield
+    finally:
+        await _on_shutdown()
+
+
+# ---------------------------------------
+# MCP App Initialization
+# ---------------------------------------
+mcp = FastMCP(
+    name="fabric-mcp-proxy",
+    instructions="Proxy for accessing FABRIC API data via LLM tool calls.",
+    version="2.0.0",
+    lifespan=_cache_lifespan if config.transport == "http" else None,
+)
+
+# ---------------------------------------
+# Register custom HTTP routes & build middleware stack (HTTP only)
+# ---------------------------------------
+# NOTE: FastMCP creates the ASGI app lazily inside mcp.run(). The `mcp.app`
+# attribute does NOT exist at import time.  Use `mcp.custom_route` for HTTP
+# endpoints and pass Starlette `Middleware` instances via `mcp.run(middleware=...)`.
+
+# Middleware list passed to mcp.run() — assembled at import time, applied at run time
+_http_middleware: list = []
+
 if config.transport == "http":
-    if hasattr(mcp, "app") and mcp.app:
-        mcp.app.add_event_handler("startup", _on_startup)
-        mcp.app.add_event_handler("shutdown", _on_shutdown)
+    from starlette.middleware import Middleware
+
+    # Access log middleware (always in server mode)
+    _http_middleware.append(Middleware(AccessLogMiddleware))
+
+    if config.metrics_enabled:
+        from fabric_api_mcp.middleware.metrics import MetricsMiddleware
+        from fabric_api_mcp.middleware.security_metrics import SecurityMetricsMiddleware
+
+        _http_middleware.append(Middleware(MetricsMiddleware))
+        _http_middleware.append(Middleware(SecurityMetricsMiddleware))
+
+        # Prometheus /metrics endpoint via FastMCP custom_route (queued, applied at run time)
+        from starlette.requests import Request as StarletteRequest
+        from starlette.responses import Response
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+        @mcp.custom_route("/metrics", methods=["GET"], name="prometheus_metrics", include_in_schema=False)
+        async def prometheus_metrics(request: StarletteRequest) -> Response:
+            return Response(
+                content=generate_latest(),
+                media_type=CONTENT_TYPE_LATEST,
+            )
+
+# Wire cache to topology tools
+topology.set_cache(CACHE)
 
 # ---------------------------------------
 # Tool Registry with Names & Annotations
@@ -309,11 +322,17 @@ def main():
         atexit.register(_cleanup)
         mcp.run(transport="stdio")
     else:
-        # Server mode: HTTP transport with ASGI lifecycle
+        # Server mode: HTTP transport — pass Starlette middleware and use
+        # FastMCP's lifespan for cache start/stop.
         if config.uvicorn_access_log:
             os.environ.setdefault("UVICORN_ACCESS_LOG", "true")
         log.info("Starting FABRIC MCP (FastMCP) on http://%s:%s", config.host, config.port)
-        mcp.run(transport="http", host=config.host, port=config.port)
+        mcp.run(
+            transport="http",
+            host=config.host,
+            port=config.port,
+            middleware=_http_middleware or None,
+        )
 
 
 if __name__ == "__main__":
