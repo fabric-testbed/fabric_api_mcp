@@ -2,10 +2,10 @@ services:
   mcp-server:
     build:
       # Set the build context to the subdirectory containing the Dockerfile and code
-      context: server/
+      context: .
       dockerfile: Dockerfile
-    container_name: fabric-prov-mcp
-    image: fabric-prov-mcp:latest
+    container_name: fabric-api-mcp
+    image: fabric-api-mcp:latest
     restart: always
     # The MCP server uses port 5000 internally (as defined in __main__.py)
     networks:
@@ -22,7 +22,7 @@ services:
 
   nginx:
     image: library/nginx:1
-    container_name: fabric-prov-nginx
+    container_name: fabric-api-nginx
     networks:
       - frontend
       - backend
@@ -36,7 +36,40 @@ services:
       - ./nginx-logs:/var/log/nginx
     restart: always
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fabric-api-prometheus
+    restart: always
+    user: "${PROMETHEUS_UID:-65534}:${PROMETHEUS_GID:-65534}"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    networks:
+      - frontend
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /opt/data/production/services/api-mcp/monitoring/prometheus:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: fabric-api-grafana
+    restart: always
+    user: "${GRAFANA_UID:-472}:${GRAFANA_GID:-472}"
+    networks:
+      - frontend
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SERVER_ROOT_URL: "https://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - /opt/data/production/services/api-mcp/monitoring/grafana:/var/lib/grafana
+
 networks:
   frontend:
   backend:
     internal: true
+
+volumes: {}

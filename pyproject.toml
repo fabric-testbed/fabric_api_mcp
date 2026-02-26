@@ -1,0 +1,55 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "fabric_api_mcp"
+version = "0.0.2b0"
+description = "FABRIC Testbed MCP Server — exposes FABRIC API operations as LLM-accessible tools"
+authors = [
+  { name = "Komal Thareja", email = "kthare10@renci.org" },
+]
+
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2.0",
+    "requests",
+    "fabrictestbed_extensions==2.0.0rc3",
+    "fastmcp",
+    "slowapi",
+    "prometheus-client",
+]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://fabric-testbed.net/"
+Sources = "https://github.com/fabric-testbed/fabric-mcp"
+
+[project.scripts]
+fabric-mcp = "fabric_api_mcp.__main__:main"
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "pytest-asyncio",
+  "httpx<1.0.0",
+  "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = ["tests/"]
+
+[tool.isort]
+profile = "black"
+src_paths = ["fabric_api_mcp"]
