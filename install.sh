@@ -34,12 +34,15 @@ usage() {
 Usage: install.sh [OPTIONS]
 
 Options:
-  --local              Set up local mode (Python venv, fabric-cli, full features)
-  --remote             Set up remote mode (jq + Node.js, lightweight)
+  --local              Set up local mode (stdio transport, SSH to VMs, post-boot config)
+  --remote             Set up remote mode (connects to remote MCP server via mcp-remote)
   --config-dir <path>  Override FABRIC config directory (default: ~/.fabric-api-mcp/fabric_config)
   --venv <path>        Override Python venv path (default: ~/.fabric-api-mcp/venv)
   --no-browser         Pass --no-browser to fabric-cli (for headless environments)
   --help               Show this help message
+
+Both modes install a Python venv with fabric_api_mcp and fabric-cli.
+Remote mode additionally requires jq + Node.js (npx/mcp-remote).
 
 Examples:
   # Local mode (full-featured)
@@ -192,10 +195,8 @@ setup_dirs() {
   ok "Directories created"
 }
 
-# ----------------------- Local mode setup -----------------------
-
-setup_local() {
-  info "=== Setting up LOCAL mode ==="
+setup_venv() {
+  info "=== Setting up Python venv + fabric_api_mcp ==="
 
   # 1. Ensure Python 3.11+
   ensure_python
@@ -214,12 +215,14 @@ setup_local() {
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
   "$VENV_DIR/bin/pip" install --quiet "git+https://github.com/fabric-testbed/fabric_api_mcp.git"
   ok "fabric_api_mcp installed (includes fabric-cli)"
+}
 
-  # 4. Create config dir
+setup_configure() {
+  # Create config dir
   mkdir -p "$CONFIG_DIR"
   ok "Config directory: $CONFIG_DIR"
 
-  # 5. Run fabric-cli configure setup (interactive) — use the venv's fabric-cli
+  # Run fabric-cli configure setup (interactive) — use the venv's fabric-cli
   local venv_cli="$VENV_DIR/bin/fabric-cli"
   if [[ -f "$CONFIG_DIR/fabric_rc" ]]; then
     ok "fabric_rc already exists at $CONFIG_DIR/fabric_rc — skipping configure"
@@ -246,8 +249,14 @@ setup_local() {
   if [[ -f "$CONFIG_DIR/fabric_rc" ]]; then
     CONFIGURED_PROJECT_ID="$(sed -n 's/^export FABRIC_PROJECT_ID=//p' "$CONFIG_DIR/fabric_rc" 2>/dev/null || true)"
   fi
+}
 
-  # 6. Download fabric-api-local.sh
+# ----------------------- Local mode setup -----------------------
+
+setup_local() {
+  info "=== Setting up LOCAL mode ==="
+
+  # Download fabric-api-local.sh
   info "Downloading fabric-api-local.sh..."
   curl -fsSL "$GITHUB_RAW/scripts/fabric-api-local.sh" -o "$BIN_DIR/fabric-api-local.sh"
   chmod +x "$BIN_DIR/fabric-api-local.sh"
@@ -287,31 +296,24 @@ setup_remote() {
     ok "Node.js installed"
   fi
 
-  # 3. Create token (if fabric-cli is available in the venv)
+  # 3. Create token via fabric-cli (available from the venv)
   local token_dir="$INSTALL_DIR"
   local token_file="$token_dir/id_token.json"
   local venv_cli="$VENV_DIR/bin/fabric-cli"
   if [[ -f "$token_file" ]]; then
     ok "Token file already exists: $token_file"
   else
-    if [[ -x "$venv_cli" ]]; then
-      info "Creating FABRIC token via fabric-cli..."
-      local cli_args=(tokens create --tokenlocation "$token_file")
-      if $NO_BROWSER; then
-        cli_args+=(--no-browser)
-      fi
-      "$venv_cli" "${cli_args[@]}" || {
-        warn "Token creation failed or was cancelled."
-        warn "You can create a token later:"
-        warn "  $venv_cli tokens create --tokenlocation $token_file"
-        warn "Or download from: https://portal.fabric-testbed.net/experiments#manageTokens"
-      }
-    else
-      warn "fabric-cli not available. Download your token manually:"
-      warn "  1. Go to https://portal.fabric-testbed.net/experiments#manageTokens"
-      warn "  2. Save the token JSON to: $token_file"
-      warn "Or install local mode first (--local) to get fabric-cli in the venv."
+    info "Creating FABRIC token via fabric-cli..."
+    local cli_args=(tokens create --tokenlocation "$token_file")
+    if $NO_BROWSER; then
+      cli_args+=(--no-browser)
     fi
+    "$venv_cli" "${cli_args[@]}" || {
+      warn "Token creation failed or was cancelled."
+      warn "You can create a token later:"
+      warn "  $venv_cli tokens create --tokenlocation $token_file"
+      warn "Or download from: https://portal.fabric-testbed.net/experiments#manageTokens"
+    }
   fi
 
   # 4. Download fabric-api.sh
@@ -336,16 +338,16 @@ print_summary() {
   echo "============================================================"
   echo ""
   echo "  Install directory:  $INSTALL_DIR"
+  echo "  Venv:     $VENV_DIR"
+  echo "  Config:   $CONFIG_DIR"
+  if [[ -n "$CONFIGURED_PROJECT_ID" ]]; then
+    echo "  Project:  $CONFIGURED_PROJECT_ID"
+  fi
 
   if $INSTALL_LOCAL; then
     echo ""
     echo "  --- Local mode ---"
     echo "  Script:   $BIN_DIR/fabric-api-local.sh"
-    echo "  Venv:     $VENV_DIR"
-    echo "  Config:   $CONFIG_DIR"
-    if [[ -n "$CONFIGURED_PROJECT_ID" ]]; then
-      echo "  Project:  $CONFIGURED_PROJECT_ID"
-    fi
     echo ""
     echo "  MCP client config (Claude Code CLI):"
     echo "    claude mcp add fabric-api $BIN_DIR/fabric-api-local.sh"
@@ -386,19 +388,21 @@ JSONEOF
   echo ""
   echo "  Next steps:"
   local step=1
-  if $INSTALL_LOCAL && [[ ! -f "$CONFIG_DIR/fabric_rc" ]]; then
+  if [[ ! -f "$CONFIG_DIR/fabric_rc" ]]; then
     echo "    $step. Run: $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR"
     step=$((step + 1))
   fi
   echo "    $step. Add the MCP server to your client (see config above)"
-  step=$((step + 1))
 
-  if $INSTALL_LOCAL; then
-    echo ""
-    echo "  To change your FABRIC project:"
-    echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectname <name>"
-    echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectid <uuid>"
-  fi
+  echo ""
+  echo "  To change your FABRIC project:"
+  echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectname <name>"
+  echo "    $VENV_DIR/bin/fabric-cli configure setup --config-dir $CONFIG_DIR --projectid <uuid>"
+
+  echo ""
+  echo "  To refresh your token:"
+  echo "    $VENV_DIR/bin/fabric-cli tokens create --tokenlocation $INSTALL_DIR/id_token.json"
+
   echo ""
   echo "  Documentation: https://github.com/fabric-testbed/fabric_api_mcp"
   echo "============================================================"
@@ -409,6 +413,12 @@ JSONEOF
 main() {
   detect_os
   setup_dirs
+
+  # Always install Python venv + fabric_api_mcp (provides fabric-cli)
+  setup_venv
+
+  # Always run configure (creates fabric_rc, tokens, SSH keys)
+  setup_configure
 
   if $INSTALL_LOCAL; then
     setup_local
