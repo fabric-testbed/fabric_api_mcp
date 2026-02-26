@@ -13,7 +13,7 @@ vouch:
         - https://VOUCH_HOSTNAME/grafana/
 
     jwt:
-        secret: kmDDgMLGThapDV1QnhWPJd0oARzjLa5Zy3bQ8WfOIYk=
+        secret: DUMMY_SECRET
 
     cookie:
         # allow the jwt/cookie to be set into http://yourdomain.com (defaults to true, requiring https://yourdomain.com)
