@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "fabric_api_mcp"
-version = "0.0.2"
+version = "0.0.3"
 description = "FABRIC Testbed MCP Server — exposes FABRIC API operations as LLM-accessible tools"
 authors = [
   { name = "Komal Thareja", email = "kthare10@renci.org" },
@@ -18,7 +18,7 @@ dependencies = [
     "uvicorn",
     "pydantic>=2.0",
     "requests",
-    "fabrictestbed_extensions==2.0.0rc3",
+    "fabrictestbed_extensions==2.0.0rc4",
     "fastmcp",
     "slowapi",
     "prometheus-client",
