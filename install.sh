@@ -10,7 +10,8 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/install.sh | bash -s -- --local --remote
 # ===================================================================
 
-INSTALL_DIR="$HOME/.fabric-api-mcp"
+WORK_DIR="$HOME/work"
+INSTALL_DIR="$WORK_DIR/fabric-api-mcp"
 BIN_DIR="$INSTALL_DIR/bin"
 VENV_DIR=""
 CONFIG_DIR=""
@@ -36,8 +37,8 @@ Usage: install.sh [OPTIONS]
 Options:
   --local              Set up local mode (stdio transport, SSH to VMs, post-boot config)
   --remote             Set up remote mode (connects to remote MCP server via mcp-remote)
-  --config-dir <path>  Override FABRIC config directory (default: ~/.fabric-api-mcp/fabric_config)
-  --venv <path>        Override Python venv path (default: ~/.fabric-api-mcp/venv)
+  --config-dir <path>  Override FABRIC config directory (default: ~/work/fabric_config)
+  --venv <path>        Override Python venv path (default: ~/work/fabric-api-mcp/venv)
   --no-browser         Pass --no-browser to fabric-cli (for headless environments)
   --help               Show this help message
 
@@ -80,7 +81,7 @@ fi
 
 # Apply defaults after arg parsing
 VENV_DIR="${VENV_DIR:-$INSTALL_DIR/venv}"
-CONFIG_DIR="${CONFIG_DIR:-$INSTALL_DIR/fabric_config}"
+CONFIG_DIR="${CONFIG_DIR:-$WORK_DIR/fabric_config}"
 
 # ----------------------- OS detection -----------------------
 
@@ -190,7 +191,8 @@ ensure_python() {
 # ----------------------- Common setup -----------------------
 
 setup_dirs() {
-  info "Creating install directory: $INSTALL_DIR"
+  info "Creating directories: $WORK_DIR, $INSTALL_DIR"
+  mkdir -p "$WORK_DIR"
   mkdir -p "$BIN_DIR"
   ok "Directories created"
 }
@@ -262,7 +264,7 @@ setup_local() {
   chmod +x "$BIN_DIR/fabric-api-local.sh"
 
   # Patch defaults to point to installed paths
-  sed -i.bak "s|FABRIC_VENV:-\$HOME/fabric-mcp-venv|FABRIC_VENV:-$VENV_DIR|" "$BIN_DIR/fabric-api-local.sh"
+  sed -i.bak "s|FABRIC_VENV:-\$HOME/work/fabric-api-mcp/venv|FABRIC_VENV:-$VENV_DIR|" "$BIN_DIR/fabric-api-local.sh"
   sed -i.bak "s|FABRIC_RC:-\$HOME/work/fabric_config/fabric_rc|FABRIC_RC:-$CONFIG_DIR/fabric_rc|" "$BIN_DIR/fabric-api-local.sh"
   rm -f "$BIN_DIR/fabric-api-local.sh.bak"
   ok "fabric-api-local.sh installed to $BIN_DIR/"
@@ -322,7 +324,7 @@ setup_remote() {
   chmod +x "$BIN_DIR/fabric-api.sh"
 
   # Patch default token path to installed location
-  sed -i.bak "s|FABRIC_TOKEN_JSON:-\$HOME/work/claude/id_token.json|FABRIC_TOKEN_JSON:-$token_file|" "$BIN_DIR/fabric-api.sh"
+  sed -i.bak "s|FABRIC_TOKEN_JSON:-\$HOME/work/fabric-api-mcp/id_token.json|FABRIC_TOKEN_JSON:-$token_file|" "$BIN_DIR/fabric-api.sh"
   rm -f "$BIN_DIR/fabric-api.sh.bak"
   ok "fabric-api.sh installed to $BIN_DIR/"
 
@@ -403,7 +405,12 @@ JSONEOF
 
   echo ""
   echo "  To refresh your token:"
-  echo "    $VENV_DIR/bin/fabric-cli tokens create --tokenlocation $INSTALL_DIR/id_token.json"
+  if $INSTALL_LOCAL; then
+    echo "    $VENV_DIR/bin/fabric-cli tokens refresh --tokenlocation $CONFIG_DIR/tokens.json"
+  fi
+  if $INSTALL_REMOTE; then
+    echo "    $VENV_DIR/bin/fabric-cli tokens create --tokenlocation $INSTALL_DIR/id_token.json"
+  fi
 
   echo ""
   echo "  Documentation: https://github.com/fabric-testbed/fabric_api_mcp"
