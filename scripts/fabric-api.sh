@@ -16,7 +16,7 @@ set -euo pipefail
 
 # Path to your FABRIC token JSON file (must contain {"id_token": "..."})
 # Download from: FABRIC Portal → Experiments → Manage Tokens
-FABRIC_TOKEN_JSON="${FABRIC_TOKEN_JSON:-$HOME/work/claude/id_token.json}"
+FABRIC_TOKEN_JSON="${FABRIC_TOKEN_JSON:-$HOME/work/fabric-api-mcp/id_token.json}"
 
 # URL of the remote MCP server (Docker Compose-deployed)
 FABRIC_MCP_URL="${FABRIC_MCP_URL:-https://alpha-5.fabric-testbed.net/mcp}"

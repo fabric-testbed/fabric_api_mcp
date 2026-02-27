@@ -18,7 +18,7 @@ set -euo pipefail
 FABRIC_RC="${FABRIC_RC:-$HOME/work/fabric_config/fabric_rc}"
 
 # Path to your Python virtual environment (with fabric_api_mcp installed)
-FABRIC_VENV="${FABRIC_VENV:-$HOME/fabric-mcp-venv}"
+FABRIC_VENV="${FABRIC_VENV:-$HOME/work/fabric-api-mcp/venv}"
 
 # ==============================================================
 

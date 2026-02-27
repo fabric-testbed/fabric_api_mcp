@@ -51,16 +51,16 @@ curl -fsSL https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main/
 ```
 
 The installer:
-1. Creates `~/.fabric-api-mcp/` with a Python venv, config directory, and helper scripts
+1. Creates `~/work/fabric-api-mcp/` with a Python venv, bin directory, and helper scripts
 2. Installs `fabric_api_mcp` (which includes `fabric-cli`) into the venv
-3. Runs `fabric-cli configure setup` to authenticate via CILogon and set up your FABRIC config (token, SSH keys, `fabric_rc`)
+3. Runs `fabric-cli configure setup` to authenticate via CILogon and set up your FABRIC config (token, SSH keys, `fabric_rc`) in `~/work/fabric_config/`
 4. Prints the configured **project ID** and MCP client config snippet
 
 > **Project selection:** By default, your first FABRIC project is used. The installer prints the project ID at the end. To change it later:
 > ```bash
-> ~/.fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/.fabric-api-mcp/fabric_config --projectname <name>
+> ~/work/fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config --projectname <name>
 > # or by UUID:
-> ~/.fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/.fabric-api-mcp/fabric_config --projectid <uuid>
+> ~/work/fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config --projectid <uuid>
 > ```
 
 See `--help` for all options (`--config-dir`, `--venv`, `--no-browser`).
@@ -72,8 +72,8 @@ See `--help` for all options (`--config-dir`, `--venv`, `--no-browser`).
 ## MCP client configuration
 
 After installing (via the one-liner above or manually), add the FABRIC MCP server to your client. Replace `<SCRIPT>` with the path to your helper script:
-- **Local mode:** `~/.fabric-api-mcp/bin/fabric-api-local.sh` (or wherever you placed it)
-- **Remote mode:** `~/.fabric-api-mcp/bin/fabric-api.sh`
+- **Local mode:** `~/work/fabric-api-mcp/bin/fabric-api-local.sh` (or wherever you placed it)
+- **Remote mode:** `~/work/fabric-api-mcp/bin/fabric-api.sh`
 
 #### Claude Code CLI
 
@@ -501,8 +501,8 @@ Local mode runs the MCP server on your machine using your FABRIC token file and 
 Requires Python 3.11+ (tested with 3.13 and 3.14).
 
 ```bash
-python3 -m venv ~/fabric-mcp-venv
-source ~/fabric-mcp-venv/bin/activate
+python3 -m venv ~/work/fabric-api-mcp/venv
+source ~/work/fabric-api-mcp/venv/bin/activate
 ```
 
 You can place the venv anywhere — just remember the path for later steps.
@@ -528,18 +528,18 @@ pip install -e .
 Use the **venv's** `fabric-cli` (installed as a dependency in Step 2) to set up your config. This creates the config directory, generates a token, creates bastion and sliver SSH keys, and writes `ssh_config` and `fabric_rc` files — all in one step:
 
 ```bash
-~/fabric-mcp-venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config
+~/work/fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config
 ```
 
 This opens a browser for CILogon authentication. Once complete, it generates all required files in the config directory. Add `--no-browser` for remote/headless environments.
 
-> **Important:** Use the venv's `fabric-cli` (`~/fabric-mcp-venv/bin/fabric-cli`), not a system-installed one, to ensure you have the correct version with the `configure` command.
+> **Important:** Use the venv's `fabric-cli` (`~/work/fabric-api-mcp/venv/bin/fabric-cli`), not a system-installed one, to ensure you have the correct version with the `configure` command.
 
 > **Project selection:** By default, your first FABRIC project is used. To specify a project: `--projectid <uuid>` or `--projectname <name>`. The selected project ID is stored in `fabric_rc` as `FABRIC_PROJECT_ID`.
 
 > **To change your project later**, re-run configure with the new project:
 > ```bash
-> ~/fabric-mcp-venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config --projectname <name>
+> ~/work/fabric-api-mcp/venv/bin/fabric-cli configure setup --config-dir ~/work/fabric_config --projectname <name>
 > ```
 
 **Alternatively**, set up manually. The config directory should contain:
@@ -590,7 +590,7 @@ The script defaults are shown below. Update if your paths differ — either edit
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `FABRIC_VENV` | `~/fabric-mcp-venv` | Path to your Python venv |
+| `FABRIC_VENV` | `~/work/fabric-api-mcp/venv` | Path to your Python venv |
 | `FABRIC_RC` | `~/work/fabric_config/fabric_rc` | Path to your `fabric_rc` file |
 
 If you used a different venv path in Step 1, update accordingly:
@@ -641,8 +641,8 @@ sudo apt install jq nodejs npm
 Create a Python venv and install `fabric_api_mcp` (which includes `fabric-cli`):
 
 ```bash
-python3 -m venv ~/fabric-mcp-venv
-~/fabric-mcp-venv/bin/pip install git+https://github.com/fabric-testbed/fabric_api_mcp.git
+python3 -m venv ~/work/fabric-api-mcp/venv
+~/work/fabric-api-mcp/venv/bin/pip install git+https://github.com/fabric-testbed/fabric_api_mcp.git
 ```
 
 ### Step 3: Create your token
@@ -650,8 +650,7 @@ python3 -m venv ~/fabric-mcp-venv
 Use the venv's `fabric-cli` to create a token:
 
 ```bash
-mkdir -p ~/work/claude
-~/fabric-mcp-venv/bin/fabric-cli tokens create --tokenlocation ~/work/claude/id_token.json
+~/work/fabric-api-mcp/venv/bin/fabric-cli tokens create --tokenlocation ~/work/fabric-api-mcp/id_token.json
 ```
 
 This opens a browser for CILogon authentication, then saves the token automatically.
@@ -661,7 +660,7 @@ This opens a browser for CILogon authentication, then saves the token automatica
 Alternatively, download your token from the [FABRIC Portal → Experiments → Manage Tokens](https://portal.fabric-testbed.net/experiments#manageTokens):
 
 ```bash
-cp /path/to/downloaded/token.json ~/work/claude/id_token.json
+cp /path/to/downloaded/token.json ~/work/fabric-api-mcp/id_token.json
 ```
 
 ### Step 4: Get the helper script
@@ -682,7 +681,7 @@ Update these if your paths or server URL differ from the defaults:
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `FABRIC_TOKEN_JSON` | `~/work/claude/id_token.json` | Path to JSON file containing `{"id_token": "..."}` |
+| `FABRIC_TOKEN_JSON` | `~/work/fabric-api-mcp/id_token.json` | Path to JSON file containing `{"id_token": "..."}` |
 | `FABRIC_MCP_URL` | `https://alpha-5.fabric-testbed.net/mcp` | URL of the remote MCP server |
 
 ### Step 6: Test
