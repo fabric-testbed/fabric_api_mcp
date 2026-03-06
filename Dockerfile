@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir uv \
 # App code (package + resources)
 COPY fabric_api_mcp/ /app/fabric_api_mcp
 COPY pyproject.toml /app/pyproject.toml
+RUN pip install --no-cache-dir --no-deps .
 
 # Use an unprivileged user
 USER appuser
