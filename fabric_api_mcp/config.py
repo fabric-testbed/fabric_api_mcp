@@ -47,6 +47,9 @@ class ServerConfig:
     transport: str
     fabric_rc: str
 
+    # Timeout for post-boot configuration (seconds)
+    post_boot_timeout: int
+
     @classmethod
     def from_env(cls) -> "ServerConfig":
         """Load configuration from environment variables with sensible defaults."""
@@ -87,6 +90,9 @@ class ServerConfig:
             local_mode=is_local,
             transport=os.environ.get("FABRIC_MCP_TRANSPORT", "stdio" if is_local else "http"),
             fabric_rc=os.environ.get("FABRIC_RC", os.path.expanduser("~/work/fabric_config/fabric_rc")),
+
+            # Post-boot configuration timeout
+            post_boot_timeout=int(os.environ.get("POST_BOOT_TIMEOUT", "600")),
         )
 
     def print_startup_info(self) -> None:

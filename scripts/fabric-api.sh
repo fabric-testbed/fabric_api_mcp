@@ -19,7 +19,7 @@ set -euo pipefail
 FABRIC_TOKEN_JSON="${FABRIC_TOKEN_JSON:-$HOME/work/fabric-api-mcp/id_token.json}"
 
 # URL of the remote MCP server (Docker Compose-deployed)
-FABRIC_MCP_URL="${FABRIC_MCP_URL:-https://alpha-5.fabric-testbed.net/mcp}"
+FABRIC_MCP_URL="${FABRIC_MCP_URL:-https://api-mcp.fabric-testbed.net/mcp}"
 
 # ==============================================================
 

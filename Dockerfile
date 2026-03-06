@@ -21,14 +21,15 @@ RUN useradd -m -u 10001 appuser
 
 WORKDIR /app
 
-# Leverage layer caching
+# Leverage layer caching: install dependencies first
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir uv \
  && uv pip install --system --no-cache --prerelease=allow -r /app/requirements.txt
 
-# App code (package + resources)
+# App code + project metadata, then install the package itself
+COPY pyproject.toml README.md LICENSE /app/
 COPY fabric_api_mcp/ /app/fabric_api_mcp
-COPY pyproject.toml /app/pyproject.toml
+RUN uv pip install --system --no-cache --no-deps /app
 
 # Use an unprivileged user
 USER appuser

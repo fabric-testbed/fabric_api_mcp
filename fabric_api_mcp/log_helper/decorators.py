@@ -15,7 +15,7 @@ log = logging.getLogger("server.tools")
 REDACT_PARAMS = frozenset({"token", "password", "secret", "key", "credential", "auth"})
 
 # Parameters to skip in logs (too verbose or not useful)
-SKIP_PARAMS: frozenset = frozenset()
+SKIP_PARAMS: frozenset = frozenset({"ctx"})
 
 
 def _sanitize_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:

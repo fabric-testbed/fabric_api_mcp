@@ -1,38 +1,37 @@
 # FABRIC API MCP Server
 
-A production-ready **Model Context Protocol (MCP)** server that exposes **FABRIC Testbed API** and inventory queries through `fabric_manager_v2`, designed for secure, token-based use by LLM clients (ChatGPT MCP, VS Code, Claude Desktop, etc.).
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
 
-- **Stateless**: no user credentials stored; every call uses a **Bearer FABRIC ID token**
-- **Deterministic tools** with strong logging, request IDs, and JSON/text log formats
-- **Reverse-proxy friendly**: ships with NGINX front end
-- **Resource cache** (optional) for fast site/host/link queries
+A production-ready **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)** server that lets LLM clients (Claude Desktop, Claude Code, VS Code Copilot, ChatGPT, Chatbox, etc.) **query, provision, and manage** resources on the **[FABRIC Testbed](https://fabric-testbed.net/)** — a nation-wide programmable network research infrastructure.
+
+### Key features
+
+- **Two modes** — run locally (full-featured, SSH to VMs) or connect to a shared remote server
+- **30+ tools** — query sites/hosts/links, build slices, modify resources, manage SSH keys, reboot nodes, and more
+- **Stateless & secure** — no credentials stored; every call uses a Bearer FABRIC ID token (server mode) or local `fabric_rc` config (local mode)
+- **Declarative filter DSL** — powerful filtering, sorting, and pagination on all query tools
+- **Production-ready** — OpenResty reverse proxy, Prometheus metrics, Grafana dashboards, structured logging with per-request tracing
+- **Resource cache** — optional background refresh for sub-second topology queries
 
 ---
 
 ## Table of contents
 
-- [Quick install](#quick-install)
-- [MCP client configuration](#mcp-client-configuration)
-- [What this server provides](#what-this-server-provides)
-- [Authentication](#authentication)
-- [Architecture](#architecture)
-- [Repo layout](#repo-layout)
-- [Environment variables](#environment-variables)
-- [Deploy with Docker Compose (Server Mode)](#deploy-with-docker-compose-server-mode)
-- [Adding new tools](#adding-new-tools)
-- [Local mode setup](#local-mode-setup)
-- [Remote mode setup](#remote-mode-setup)
-- [Local vs Remote — which to use?](#local-vs-remote--which-to-use)
-- [Quick tool examples](#quick-tool-examples)
-- [System prompt](#system-prompt)
-- [Logging](#logging)
-- [Resource cache](#resource-cache)
-- [Monitoring & Metrics (Server Mode Only)](#monitoring--metrics-server-mode-only)
-- [Security notes](#security-notes)
+| Getting started | Reference | Operations |
+|:---|:---|:---|
+| [Quick install](#quick-install) | [Tools reference](#tools-reference) | [Deploy with Docker Compose](#deploy-with-docker-compose-server-mode) |
+| [MCP client configuration](#mcp-client-configuration) | [Filter DSL & examples](#filter-dsl) | [Monitoring & Metrics](#monitoring--metrics-server-mode-only) |
+| [Local mode setup](#local-mode-setup) | [Environment variables](#environment-variables) | [Adding new tools](#adding-new-tools) |
+| [Remote mode setup](#remote-mode-setup) | [Architecture & repo layout](#architecture) | [Security notes](#security-notes) |
+| [Local vs Remote](#local-vs-remote--which-to-use) | [Logging](#logging) / [Resource cache](#resource-cache) | |
 
 ---
 
 ## Quick install
+
+> **Prerequisites:** Python 3.11+ and a [FABRIC account](https://portal.fabric-testbed.net/). Remote mode also requires Node.js and `jq`.
 
 Set up FABRIC MCP with a single command:
 
@@ -110,118 +109,164 @@ Add to `.mcp.json` in your project root (or workspace settings):
 }
 ```
 
+#### Chatbox
+
+[Chatbox](https://chatboxai.app) (v1.14+) supports MCP servers. Go to **Settings → MCP → Add Server**, then paste this JSON:
+
+```json
+{
+  "name": "fabric-api",
+  "command": "<SCRIPT>",
+  "args": [],
+  "env": {}
+}
+```
+
+Alternatively, for **remote mode** (SSE transport), use the URL-based format:
+
+```json
+{
+  "name": "fabric-api",
+  "url": "https://<YOUR_HOST>/mcp/sse"
+}
+```
+
 ---
 
-## What this server provides
+## Tools reference
 
-### Exposed MCP tools (from this codebase)
-- `query-sites` — list sites (filters, sort, pagination)
-- `query-hosts` — list hosts (filters, sort, pagination)
-- `query-facility-ports` — list facility ports
-- `query-links` — list L2/L3 links
-- `query-slices` — search/list slices or fetch a single slice
-- `get-slivers` — list slivers for a slice
-- `renew-slice` — renew slice by `lease_end_time`
-- `delete-slice` — delete a slice (by ID)
-- `make-ip-publicly-routable` — enable external access for FABNetv4Ext/FABNetv6Ext network IPs
-- `get-network-info` — get network details including available/public IPs, gateway, subnet
-- `modify-slice-resources` — add or remove nodes, components, or networks from an existing slice
-- `accept-modify` — accept the last modify
-- `build-slice` — build and submit a slice with nodes, components, and networks
-- `show-my-projects` — list projects for the current user (or specified UUID)
-- `list-project-users` — list users in a project
-- `get-user-keys` — fetch a user's SSH/public keys
-- `get-user-info` — fetch user info (self_info=True for token owner, or self_info=False + user_uuid for others)
-- `add-public-key` — add a public key to a sliver (POA addkey)
-- `remove-public-key` — remove a public key from a sliver (POA removekey)
-- `os-reboot` — reboot a sliver (POA)
+All tools accept JSON parameters and return JSON responses.
 
-> All tools expect JSON params and return JSON.
+### Topology queries
+
+| Tool | Description |
+|:-----|:------------|
+| `query-sites` | List sites with filters, sorting, and pagination |
+| `query-hosts` | List hosts with filters, sorting, and pagination |
+| `query-facility-ports` | List external facility port connections |
+| `query-links` | List L2/L3 network links between sites |
+
+### Slice lifecycle
+
+| Tool | Description |
+|:-----|:------------|
+| `build-slice` | Create a slice with nodes, networks, components, switches, and facility ports |
+| `query-slices` | Search/list slices or fetch a single slice by name/ID |
+| `get-slivers` | List slivers (VMs, network services) within a slice |
+| `modify-slice-resources` | Add or remove nodes, components, networks from an existing slice |
+| `accept-modify` | Accept the last pending modification |
+| `renew-slice` | Extend a slice's lease end time |
+| `delete-slice` | Delete a slice by ID |
+| `post-boot-config` | Configure networking inside VMs after slice reaches `StableOK` *(local mode only)* |
+
+### Networking
+
+| Tool | Description |
+|:-----|:------------|
+| `list-nodes` | List nodes in a slice with SSH commands |
+| `list-networks` | List networks in a slice with subnet/gateway info |
+| `list-interfaces` | List interfaces in a slice with MAC/VLAN/IP details |
+| `get-network-info` | Get network details: available IPs, public IPs, gateway, subnet |
+| `make-ip-publicly-routable` | Enable external access for FABNetv4Ext/FABNetv6Ext IPs |
+
+### User & project management
+
+| Tool | Description |
+|:-----|:------------|
+| `get-user-info` | Fetch user info (self or by UUID) — name, email, bastion login, roles |
+| `show-my-projects` | List FABRIC projects for the current user |
+| `list-project-users` | List users in a specific project |
+| `get-user-keys` | Fetch a user's SSH/public keys |
+| `get-bastion-username` | Get the bastion login username |
+
+### Node operations (POA)
+
+| Tool | Description |
+|:-----|:------------|
+| `add-public-key` | Add an SSH public key to a sliver |
+| `remove-public-key` | Remove an SSH public key from a sliver |
+| `os-reboot` | Reboot a sliver's OS |
 
 ---
 
 ## Authentication
 
-Every MCP call **must include** a FABRIC ID token:
+| Mode | How it works |
+|:-----|:-------------|
+| **Server mode** | Every request must include `Authorization: Bearer <FABRIC_ID_TOKEN>`. The server does not store tokens. |
+| **Local mode** | Credentials are read automatically from your `fabric_rc` file (`FABRIC_TOKEN_LOCATION`). No Bearer header needed. |
 
-```
-
-Authorization: Bearer <FABRIC_ID_TOKEN>
-
-```
-
-Obtain tokens via the FABRIC Portal → **Experiments → Manage Tokens** (the token JSON contains `id_token`).
-
-This server **does not** read any local token/config files and **does not persist** tokens.
+**Get a token:** Use `fabric-cli tokens create` (installed with this package) or download from the [FABRIC Portal → Experiments → Manage Tokens](https://portal.fabric-testbed.net/experiments#manageTokens). The token JSON contains an `id_token` field.
 
 ---
 
 ## Architecture
 
 ```
-
-MCP Client (ChatGPT / VSCode / Claude)
-└─(call_tool + Authorization: Bearer <token>)
-FABRIC Provisioning MCP Server (FastMCP + FastAPI)
-└─ FabricManagerV2 (token-based calls)
-└─ FABRIC Orchestrator / APIs
-
+┌─────────────────────────────────────────────────────────────────┐
+│  MCP Client (Claude Desktop / VS Code / ChatGPT / Chatbox)     │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ call_tool + Bearer token (server mode)
+                           │ — or stdio (local mode)
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  FABRIC MCP Server (FastMCP + FastAPI)                          │
+│  ├─ Tools (topology, slices, networking, user mgmt, POA)        │
+│  ├─ ResourceCache (optional background refresh)                 │
+│  ├─ Middleware (access log, rate limit, metrics, security)      │
+│  └─ Prometheus /metrics endpoint                                │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  FABRIC APIs                                                    │
+│  ├─ Orchestrator (slice lifecycle, resources)                   │
+│  ├─ Credential Manager (token validation)                       │
+│  ├─ Core API (user info, projects, roles)                       │
+│  └─ Artifact Manager (images, metadata)                         │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
 ![Architecture](./images/fabric-api.png)
 
-- Access logs include a per-request **x-request-id** for tracing
-- Optional **ResourceCache**: background refresher for fast `query-*` responses
+- Every request carries a **x-request-id** for end-to-end tracing
+- **ResourceCache** refreshes topology snapshots every 5 minutes for sub-second query responses
 
 ---
 
-## Repo layout 
+## Repo layout
 
 ```
-
 .
-├─ fabric_api_mcp/
-│  ├─ __main__.py            # FastMCP entrypoint (`python -m fabric_api_mcp`)
-│  ├─ metrics.py             # Prometheus metric definitions
-│  ├─ resources_cache.py     # background cache
-│  ├─ system.md              # system prompt served via @mcp.prompt("fabric-system")
-│  ├─ middleware/
-│  │  ├─ access_log.py       # HTTP access log middleware
-│  │  ├─ metrics.py          # Prometheus HTTP metrics middleware
-│  │  ├─ rate_limit.py       # rate limiting middleware
-│  │  └─ security_metrics.py # auth failure & IP tracking middleware
-│  └─ tools/
-│     ├─ topology.py         # topology query tools
-│     └─ slices/             # slice tools split by concern
-├─ monitoring/
-│  ├─ prometheus/
-│  │  └─ prometheus.yml      # Prometheus scrape config
-│  └─ grafana/
-│     ├─ dashboards/
-│     │  └─ fabric-mcp.json  # pre-built Grafana dashboard
-│     └─ provisioning/
-│        ├─ datasources/
-│        │  └─ prometheus.yml # auto-configure Prometheus datasource
-│        └─ dashboards/
-│           └─ dashboard.yml  # dashboard provisioning config
-├─ pyproject.toml             # pip-installable package config
-├─ requirements.txt
-├─ Dockerfile
-├─ scripts/
-│  ├─ fabric-api.sh          # remote mode launcher (mcp-remote + Bearer token)
-│  └─ fabric-api-local.sh    # local/stdio mode launcher
-├─ nginx/
-│  ├─ nginx.conf
-│  └─ default.conf           # reverse proxy to mcp-server (OpenResty + Lua)
-├─ vouch/
-│  └─ config                 # Vouch Proxy config (CILogon OIDC)
-├─ ssl/
-│  ├─ fullchain.pem
-│  └─ privkey.pem
-├─ docker-compose.yml
-├─ env.template             # container UID/GID defaults (copy to .env)
-└─ README.md                 # <— this file
-
-````
+├── fabric_api_mcp/              # Python package
+│   ├── __main__.py              # FastMCP entrypoint
+│   ├── metrics.py               # Prometheus metric definitions
+│   ├── resources_cache.py       # Background topology cache
+│   ├── system.md                # System prompt (served via MCP prompt)
+│   ├── middleware/              # Request processing pipeline
+│   │   ├── access_log.py        #   HTTP access logging
+│   │   ├── metrics.py           #   Prometheus HTTP metrics
+│   │   ├── rate_limit.py        #   Rate limiting
+│   │   └── security_metrics.py  #   Auth failure & IP tracking
+│   └── tools/                   # MCP tool implementations
+│       ├── topology.py          #   Site/host/link/facility-port queries
+│       └── slices/              #   Slice lifecycle, networking, POA
+├── scripts/
+│   ├── fabric-api-local.sh      # Local mode launcher
+│   └── fabric-api.sh            # Remote mode launcher
+├── nginx/
+│   ├── nginx.conf               # OpenResty base config
+│   └── default.conf             # Reverse proxy + Vouch auth + Lua role check
+├── vouch/config                 # Vouch Proxy CILogon OIDC config
+├── monitoring/
+│   ├── prometheus/prometheus.yml # Scrape config
+│   └── grafana/                 # Dashboards + provisioning
+├── docker-compose.yml           # All 5 services
+├── Dockerfile                   # MCP server image
+├── pyproject.toml               # Package config (pip-installable)
+├── install.sh                   # One-line installer
+└── env.template                 # Template for .env
+```
 
 ---
 
@@ -351,134 +396,20 @@ docker compose exec mcp-server curl -s http://localhost:5000/metrics | head -20
 | Grafana | `https://<your-host>/grafana/` | CILogon login (requires `facility-operators` or `facility-viewers` role) |
 | Prometheus | Internal only (Docker network) | Via `docker compose exec prometheus ...` |
 
-### docker-compose.yml
+### Configuration files
 
-```yaml
-services:
-  mcp-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: fabric-api-mcp
-    image: fabric-api-mcp:latest
-    restart: always
-    networks:
-      - frontend
-    environment:
-      FABRIC_ORCHESTRATOR_HOST: orchestrator.fabric-testbed.net
-      FABRIC_AM_HOST: artifacts.fabric-testbed.net
-      FABRIC_CORE_API_HOST: uis.fabric-testbed.net
-      FABRIC_CREDMGR_HOST: cm.fabric-testbed.net
-    volumes:
-      - ./mcp-logs:/var/log/mcp
+The full Docker Compose and NGINX configurations are in the repository:
 
-  nginx:
-    image: openresty/openresty:latest
-    container_name: fabric-api-nginx
-    networks:
-      - frontend
-      - backend
-    ports:
-      - 443:443
-    volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - ./nginx/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf
-      - ./ssl/fullchain.pem:/etc/ssl/public.pem    # ← update path to your cert
-      - ./ssl/privkey.pem:/etc/ssl/private.pem      # ← update path to your key
-      - ./nginx-logs:/var/log/nginx
-    restart: always
+- **[`docker-compose.yml`](./docker-compose.yml)** — defines all 5 services (MCP server, OpenResty, Vouch Proxy, Prometheus, Grafana)
+- **[`nginx/default.conf`](./nginx/default.conf)** — OpenResty reverse proxy config with Bearer token passthrough, Vouch auth for Grafana, and Lua role checking
+- **[`nginx/nginx.conf`](./nginx/nginx.conf)** — base OpenResty config
+- **[`vouch/config`](./vouch/config)** — Vouch Proxy CILogon OIDC settings
+- **[`env.template`](./env.template)** — template for `.env` (container UIDs, CILogon credentials)
 
-  vouch-proxy:
-    image: fabrictestbed/vouch-proxy:0.27.1
-    container_name: fabric-api-vouch
-    restart: always
-    networks:
-      - frontend
-    volumes:
-      - ./vouch:/config
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: fabric-api-prometheus
-    restart: always
-    user: "${PROMETHEUS_UID:-65534}:${PROMETHEUS_GID:-65534}"
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=30d"
-    networks:
-      - frontend
-    # No ports exposed — internal only (Grafana queries via Docker network)
-    volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - /opt/data/production/services/api-mcp/monitoring/prometheus:/prometheus
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: fabric-api-grafana
-    restart: always
-    user: "${GRAFANA_UID:-472}:${GRAFANA_GID:-472}"
-    networks:
-      - frontend
-    # No ports exposed — accessed via NGINX at /grafana/
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_SERVER_ROOT_URL: "https://%(domain)s/grafana/"
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-    volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - /opt/data/production/services/api-mcp/monitoring/grafana:/var/lib/grafana
-
-networks:
-  frontend:
-  backend:
-    internal: true
-
-volumes: {}
-````
-
-### Minimal NGINX `default.conf`
-
-Make sure Authorization headers pass through and HTTP/1.1 is used:
-
-```nginx
-upstream mcp_upstream {
-    server fabric-api-mcp:5000;  # container name + internal port
-    keepalive 32;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name _;
-
-    ssl_certificate     /etc/ssl/public.pem;
-    ssl_certificate_key /etc/ssl/private.pem;
-
-    client_max_body_size 10m;
-
-    # (Optional) basic health
-    location = /healthz { return 200 "ok\n"; add_header Content-Type text/plain; }
-
-    # FastMCP endpoints (examples)
-    location /mcp {
-        proxy_pass         http://mcp_upstream;
-        proxy_http_version 1.1;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_set_header   Authorization $http_authorization;  # pass Bearer token
-        proxy_buffering    off;
-    }
-
-    # OpenAPI/Docs (FastAPI)
-    location /docs   { proxy_pass http://mcp_upstream/docs; }
-    location /openapi.json { proxy_pass http://mcp_upstream/openapi.json; }
-}
-```
+Key NGINX requirements for the MCP endpoint:
+- Pass `Authorization` header: `proxy_set_header Authorization $http_authorization`
+- Use HTTP/1.1: `proxy_http_version 1.1`
+- Disable buffering for SSE: `proxy_buffering off`
 
 ## Adding new tools
 
@@ -682,7 +613,7 @@ Update these if your paths or server URL differ from the defaults:
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `FABRIC_TOKEN_JSON` | `~/work/fabric-api-mcp/id_token.json` | Path to JSON file containing `{"id_token": "..."}` |
-| `FABRIC_MCP_URL` | `https://alpha-5.fabric-testbed.net/mcp` | URL of the remote MCP server |
+| `FABRIC_MCP_URL` | `https://api-mcp.fabric-testbed.net/mcp` | URL of the remote MCP server |
 
 ### Step 6: Test
 
@@ -703,14 +634,46 @@ See [MCP client configuration](#mcp-client-configuration) — use the path to yo
 ## Local vs Remote — which to use?
 
 | | Local mode | Remote mode |
-|---|-----------|-------------|
+|:---|:-----------|:-------------|
 | **Script** | `fabric-api-local.sh` | `fabric-api.sh` |
 | **Auth** | Automatic from `fabric_rc` | Bearer token via `id_token.json` |
-| **Transport** | stdio (direct) | stdio via `mcp-remote` → HTTPS |
-| **Server** | Runs locally (no Docker needed) | Docker Compose-deployed server |
-| **Post-boot config** | Supported (SSH access to VMs) | Not available |
-| **Dependencies** | Python venv + `fabric_api_mcp` | Python venv + `fabric_api_mcp` + `jq` + `npx mcp-remote` |
-| **Best for** | Full-featured local development | Remote access to shared server |
+| **Transport** | stdio (direct) | stdio → `mcp-remote` → HTTPS |
+| **Server** | Runs on your machine | Shared Docker Compose deployment |
+| **Post-boot config** | Yes (SSH access to VMs) | No (no SSH access) |
+| **All tools available** | Yes (30+ tools) | All except `post-boot-config` |
+| **Dependencies** | Python 3.11+ | Python 3.11+ / Node.js / `jq` |
+| **Best for** | Full-featured development & experimentation | Quick queries, shared team server |
+
+> **Recommendation:** Use **local mode** for the best experience — it supports all tools including SSH-based post-boot configuration of VMs.
+
+---
+
+## Filter DSL
+
+All `query-*` tools support a declarative JSON filter DSL with sorting and pagination.
+
+### Operators
+
+| Operator | Description | Example |
+|:---------|:------------|:--------|
+| `eq` | Equals | `{"name": {"eq": "UCSD"}}` |
+| `ne` | Not equals | `{"state": {"ne": "Dead"}}` |
+| `lt`, `lte`, `gt`, `gte` | Numeric comparisons | `{"cores_available": {"gte": 32}}` |
+| `in` | Value in list | `{"name": {"in": ["RENC", "UCSD", "STAR"]}}` |
+| `contains` | Substring, key, or element match | `{"components": {"contains": "GPU"}}` |
+| `icontains` | Case-insensitive contains | `{"name": {"icontains": "utah"}}` |
+| `regex` | Regex match | `{"name": {"regex": "(?i)^u.*"}}` |
+| `any`, `all` | List quantifiers | `{"hosts": {"any": {"icontains": "gpu"}}}` |
+
+Logical OR: `{"or": [{"name": {"eq": "UCSD"}}, {"name": {"eq": "STAR"}}]}`
+
+### Sorting & pagination
+
+```json
+{"sort": {"field": "cores_available", "direction": "desc"}, "limit": 50, "offset": 0}
+```
+
+Response format: `{"items": [...], "total": 150, "count": 50, "offset": 0, "has_more": true}`
 
 ---
 
@@ -722,9 +685,9 @@ See [MCP client configuration](#mcp-client-configuration) — use the path to yo
 {
   "tool": "query-hosts",
   "params": {
-    "filters": "lambda r: r.get('site') == 'UCSD' and any('GPU' in c for c in r.get('components', {}).keys())",
+    "filters": {"site": {"eq": "UCSD"}, "components": {"contains": "GPU"}},
     "sort": { "field": "cores_available", "direction": "desc" },
-    "limit": 100
+    "limit": 50
   }
 }
 ```
@@ -781,16 +744,31 @@ See [MCP client configuration](#mcp-client-configuration) — use the path to yo
 }
 ```
 
-**Valid component and network types**
+**Valid component models**
 
-- Component models: `GPU_TeslaT4`, `GPU_RTX6000`, `GPU_A40`, `GPU_A30`, `NIC_Basic`, `NIC_ConnectX_5`, `NIC_ConnectX_6`, `NIC_ConnectX_7_100`, `NVME_P4510`, `FPGA_Xilinx_U280`
-- L2 network types: `L2PTP` (requires SmartNIC, auto-added), `L2STS`, `L2Bridge` (single-site only)
-- L3 network types: `FABNetv4`, `FABNetv6`, `IPv4`, `IPv6`, `FABNetv4Ext`, `FABNetv6Ext`, `IPv4Ext`, `IPv6Ext`
-- Generic shorthand: `L2` (auto-selects `L2Bridge` or `L2STS` based on topology)
-- If `type` is omitted: single-site defaults to `L2Bridge`, multi-site defaults to per-node `FABNetv4`
-- NIC selection: specify `nic` in network spec to override, otherwise auto-selected based on bandwidth (100 Gbps → `NIC_ConnectX_6`, 25 Gbps → `NIC_ConnectX_5`, otherwise → `NIC_Basic`)
-- Site auto-selection: if `site` is omitted from a node, a random site with sufficient resources is chosen automatically
-- Multi-site FABNet*: when nodes span multiple sites with FABNet* types, creates per-site networks (e.g., `mynet-UTAH`, `mynet-STAR`) connecting all nodes at each site
+| Category | Models |
+|:---------|:-------|
+| GPUs | `GPU_TeslaT4`, `GPU_RTX6000`, `GPU_A40`, `GPU_A30` |
+| NICs | `NIC_Basic`, `NIC_ConnectX_5`, `NIC_ConnectX_6`, `NIC_ConnectX_7_100` (100G), `NIC_ConnectX_7_400` (400G) |
+| Storage | `NVME_P4510` |
+| FPGAs | `FPGA_Xilinx_U280`, `FPGA_Xilinx_SN1022` |
+
+**Network types**
+
+| Type | Scope | Description |
+|:-----|:------|:------------|
+| `L2Bridge` | Single-site | Local bridge |
+| `L2STS` | Cross-site | Site-to-site L2 (default for multi-site) |
+| `L2PTP` | Cross-site | Point-to-point with ERO for dedicated QoS |
+| `L2` | Auto | Shorthand — auto-selects `L2Bridge` or `L2STS` |
+| `FABNetv4` / `FABNetv6` | Per-site | Orchestrator-assigned L3 subnet |
+| `FABNetv4Ext` / `FABNetv6Ext` | Per-site | Externally routable L3 (use `make-ip-publicly-routable`) |
+| `IPv4` / `IPv6` / `IPv4Ext` / `IPv6Ext` | — | Aliases for the FABNet types above |
+
+**Auto-selection behavior:**
+- **NIC**: auto-selected based on network type and bandwidth (100 Gbps → `NIC_ConnectX_6`, 25 Gbps → `NIC_ConnectX_5`, default → `NIC_Basic`). Override with `nic` in network spec.
+- **Site**: if omitted from a node, a random site with sufficient resources is chosen. Nodes are spread across different sites when possible.
+- **Multi-site FABNet***: creates per-site networks automatically (e.g., `mynet-UTAH`, `mynet-STAR`)
 
 **IP Assignment by Network Type**
 

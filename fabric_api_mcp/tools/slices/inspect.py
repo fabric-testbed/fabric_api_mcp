@@ -39,9 +39,18 @@ def _list_nodes(
     table = []
     for node in slice_obj.get_nodes():
         row = node.toDict()
-        # In server mode, fablib doesn't have local SSH config so replace
-        # the ssh_command with a generic recommendation template.
-        if not config.local_mode and row.get("management_ip"):
+        if config.local_mode:
+            # In local mode, get the real SSH command from fablib which
+            # renders the template with actual key paths from fabric_rc.
+            try:
+                ssh_cmd = node.get_ssh_command()
+                if ssh_cmd:
+                    row["ssh_command"] = ssh_cmd
+            except Exception:
+                pass
+        elif row.get("management_ip"):
+            # In server mode, fablib doesn't have local SSH config so replace
+            # the ssh_command with a generic recommendation template.
             username = row.get("username", "ubuntu")
             mgmt_ip = row.get("management_ip", "")
             row["ssh_command"] = (
@@ -163,6 +172,9 @@ async def list_nodes(
         | node1 | UTAH | 16 | 64 | 100 | default_ubuntu_22 | host1 | Active | 2001:db8::1 |
 
     For Active nodes, include the SSH command below the table.
+    In local mode, the ssh_command is the exact, ready-to-use command with
+    real key paths from fabric_rc — present it verbatim so the user can
+    copy-paste it directly into a terminal.
     Append a summary line: ``Slice: my-slice — 2 nodes``
     """
     headers = get_http_headers(include={"authorization"}) or {}
