@@ -26,10 +26,8 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir uv \
  && uv pip install --system --no-cache --prerelease=allow -r /app/requirements.txt
 
-# App code (package + resources)
+# App code
 COPY fabric_api_mcp/ /app/fabric_api_mcp
-COPY pyproject.toml /app/pyproject.toml
-RUN pip install --no-cache-dir --no-deps .
 
 # Use an unprivileged user
 USER appuser
@@ -41,4 +39,4 @@ EXPOSE ${PORT}
 HEALTHCHECK --interval=30s --timeout=3s --retries=5 CMD bash -c "exec 3<>/dev/tcp/127.0.0.1/${PORT} && exit 0 || exit 1"
 
 # Start the FastMCP HTTP server (the module reads PORT env)
-CMD ["python", "-m", "fabric_api_mcp"]
+CMD ["python", "fabric_api_mcp/__main__.py"]
