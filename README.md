@@ -110,6 +110,28 @@ Add to `.mcp.json` in your project root (or workspace settings):
 }
 ```
 
+#### Chatbox
+
+[Chatbox](https://chatboxai.app) (v1.14+) supports MCP servers. Go to **Settings → MCP → Add Server**, then paste this JSON:
+
+```json
+{
+  "name": "fabric-api",
+  "command": "<SCRIPT>",
+  "args": [],
+  "env": {}
+}
+```
+
+Alternatively, for **remote mode** (SSE transport), use the URL-based format:
+
+```json
+{
+  "name": "fabric-api",
+  "url": "https://<YOUR_HOST>/mcp/sse"
+}
+```
+
 ---
 
 ## What this server provides
@@ -682,7 +704,7 @@ Update these if your paths or server URL differ from the defaults:
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `FABRIC_TOKEN_JSON` | `~/work/fabric-api-mcp/id_token.json` | Path to JSON file containing `{"id_token": "..."}` |
-| `FABRIC_MCP_URL` | `https://alpha-5.fabric-testbed.net/mcp` | URL of the remote MCP server |
+| `FABRIC_MCP_URL` | `https://api-mcp.fabric-testbed.net/mcp` | URL of the remote MCP server |
 
 ### Step 6: Test
 

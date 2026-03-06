@@ -3,8 +3,11 @@ Slice lifecycle tools for FABRIC MCP Server.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Union
+
+from mcp.server.fastmcp import Context
 
 from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
@@ -56,51 +59,29 @@ async def delete_slice(
     return {"status": "ok", "slice_id": slice_id}
 
 
-def _post_boot_config(
-    slice_name: Optional[str] = None,
-    slice_id: Optional[str] = None,
-    node_names: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    Run post-boot configuration on a slice. Runs synchronously via call_threadsafe.
-
-    Only available in local mode (requires SSH access to VMs).
-    """
+def _get_slice(slice_name: Optional[str] = None, slice_id: Optional[str] = None):
+    """Get a slice object from fablib."""
     fablib = create_fablib_manager()
-
     logger.info(f"Getting slice for post_boot_config: name={slice_name}, id={slice_id}")
     slice_obj = fablib.get_slice(name=slice_name, slice_id=slice_id)
-
     if slice_obj is None:
         raise ValueError(f"Slice not found: name={slice_name}, id={slice_id}")
+    return slice_obj
 
-    if node_names:
-        # Configure specific nodes only
-        configured = []
-        for node_name in node_names:
-            node = slice_obj.get_node(name=node_name)
-            if node is None:
-                raise ValueError(f"Node '{node_name}' not found in slice")
-            logger.info(f"Running config on node {node_name}")
-            node.config()
-            configured.append(node_name)
 
-        return {
-            "status": "ok",
-            "slice_name": slice_obj.get_name(),
-            "slice_id": slice_obj.get_slice_id(),
-            "configured_nodes": configured,
-        }
+def _config_single_node(slice_obj, node_name: str) -> None:
+    """Configure a single node (runs synchronously in thread)."""
+    node = slice_obj.get_node(name=node_name)
+    if node is None:
+        raise ValueError(f"Node '{node_name}' not found in slice")
+    logger.info(f"Running config on node {node_name}")
+    node.config()
 
-    # Configure entire slice
+
+def _post_boot_config_full(slice_obj) -> None:
+    """Run post_boot_config on the entire slice (runs synchronously in thread)."""
     logger.info(f"Running post_boot_config on slice {slice_obj.get_name()}")
     slice_obj.post_boot_config()
-
-    return {
-        "status": "ok",
-        "slice_name": slice_obj.get_name(),
-        "slice_id": slice_obj.get_slice_id(),
-    }
 
 
 @tool_logger("fabric_post_boot_config")
@@ -108,6 +89,7 @@ async def post_boot_config(
     slice_name: Optional[str] = None,
     slice_id: Optional[str] = None,
     node_names: Optional[Union[str, List[str]]] = None,
+    ctx: Context = None,
 ) -> Dict[str, Any]:
     """
     Run post-boot configuration on a FABRIC slice (local mode only).
@@ -134,6 +116,7 @@ async def post_boot_config(
             If omitted, configures the entire slice (all nodes, networks,
             interfaces). If provided, only runs node.config() on the
             specified nodes. Can be a list or JSON string.
+        ctx: MCP context for progress reporting (injected automatically).
 
     Returns:
         Dict with status and slice identifiers. If node_names was provided,
@@ -158,12 +141,67 @@ async def post_boot_config(
             # Treat as single node name
             node_names = [node_names]
 
-    return await call_threadsafe(
-        _post_boot_config,
-        slice_name=slice_name,
-        slice_id=slice_id,
-        node_names=node_names,
-    )
+    timeout = config.post_boot_timeout
+
+    try:
+        # Get the slice object (in thread since it's a network call)
+        slice_obj = await call_threadsafe(
+            _get_slice, slice_name=slice_name, slice_id=slice_id,
+        )
+
+        if node_names:
+            # Per-node configuration with progress reporting
+            total = len(node_names)
+            configured = []
+            for i, node_name in enumerate(node_names):
+                if ctx:
+                    await ctx.report_progress(
+                        i, total, f"Configuring node {node_name} ({i + 1}/{total})..."
+                    )
+                await call_threadsafe(
+                    _config_single_node,
+                    timeout=timeout,
+                    slice_obj=slice_obj,
+                    node_name=node_name,
+                )
+                configured.append(node_name)
+                if ctx:
+                    await ctx.report_progress(
+                        i + 1, total, f"Configured node {node_name} ({i + 1}/{total})"
+                    )
+
+            return {
+                "status": "ok",
+                "slice_name": slice_obj.get_name(),
+                "slice_id": slice_obj.get_slice_id(),
+                "configured_nodes": configured,
+            }
+
+        # Full slice configuration
+        if ctx:
+            await ctx.report_progress(
+                0, 1, "Running post_boot_config on entire slice..."
+            )
+        await call_threadsafe(
+            _post_boot_config_full,
+            timeout=timeout,
+            slice_obj=slice_obj,
+        )
+        if ctx:
+            await ctx.report_progress(1, 1, "Post-boot configuration complete")
+
+        return {
+            "status": "ok",
+            "slice_name": slice_obj.get_name(),
+            "slice_id": slice_obj.get_slice_id(),
+        }
+
+    except asyncio.TimeoutError:
+        raise TimeoutError(
+            f"post_boot_config timed out after {timeout} seconds. "
+            f"Increase POST_BOOT_TIMEOUT env var (current: {timeout}s) or "
+            f"configure specific nodes with node_names to reduce scope."
+        )
 
 
 TOOLS = [renew_slice, delete_slice, post_boot_config]
