@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "fabric_api_mcp"
-version = "0.0.3"
+version = "0.0.4"
 description = "FABRIC Testbed MCP Server — exposes FABRIC API operations as LLM-accessible tools"
 authors = [
   { name = "Komal Thareja", email = "kthare10@renci.org" },
