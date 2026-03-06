@@ -39,4 +39,4 @@ EXPOSE ${PORT}
 HEALTHCHECK --interval=30s --timeout=3s --retries=5 CMD bash -c "exec 3<>/dev/tcp/127.0.0.1/${PORT} && exit 0 || exit 1"
 
 # Start the FastMCP HTTP server (the module reads PORT env)
-CMD ["python", "fabric_api_mcp/__main__.py"]
+CMD ["python", "-m", "fabric_api_mcp"]
