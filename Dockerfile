@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir uv \
  && uv pip install --system --no-cache --prerelease=allow -r /app/requirements.txt
 
 # App code + project metadata, then install the package itself
-COPY pyproject.toml /app/pyproject.toml
+COPY pyproject.toml README.md /app/
 COPY fabric_api_mcp/ /app/fabric_api_mcp
 RUN uv pip install --system --no-cache --no-deps /app
 
