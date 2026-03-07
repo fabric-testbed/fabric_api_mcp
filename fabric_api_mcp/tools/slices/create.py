@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from ipaddress import IPv4Network
 from typing import Any, Dict, List, Optional, Union
 
 from fabrictestbed_extensions.fablib.fablib import FablibManager
@@ -537,6 +538,7 @@ def _build_and_submit_slice(
             bandwidth = net_spec.get("bandwidth")
             user_nic_model = net_spec.get("nic") or net_spec.get("nic_model")
             ero = net_spec.get("ero")  # Explicit Route Option: list of site hops
+            subnet = net_spec.get("subnet")  # IPv4 subnet for L2 networks
 
             # Support two formats:
             # 1. Simple: "nodes": ["node1", "node2"] - auto-create NICs
@@ -653,11 +655,15 @@ def _build_and_submit_slice(
                 slice_obj.add_l3network(name=net_name, interfaces=interfaces, type=l3_type)
             else:
                 logger.info(f"Creating L2 network {net_name} (type={net_type})")
-                net_service = slice_obj.add_l2network(
+                l2_kwargs: Dict[str, Any] = dict(
                     name=net_name,
                     interfaces=interfaces,
                     type=net_type,
                 )
+                if subnet:
+                    l2_kwargs["subnet"] = IPv4Network(subnet)
+                    logger.info(f"Using subnet {subnet} for L2 network {net_name}")
+                net_service = slice_obj.add_l2network(**l2_kwargs)
 
                 # ERO sets explicit route hops for L2PTP (dedicated QoS)
                 if ero and net_type == "L2PTP":
@@ -836,6 +842,10 @@ async def build_slice(
                 * 100 Gbps → NIC_ConnectX_6
                 * 25 Gbps → NIC_ConnectX_5
                 * No bandwidth or other types → NIC_Basic
+            - subnet (str, optional): IPv4 subnet for L2 networks (e.g., "192.168.1.0/24").
+              In local mode with "auto" interface mode, post_boot_config will
+              automatically allocate IPs from this subnet and configure
+              the interfaces inside VMs.
             - nic (str, optional): Explicit NIC model to use for this network.
               Overrides automatic selection. Valid models:
                 "NIC_Basic", "NIC_ConnectX_5", "NIC_ConnectX_6",

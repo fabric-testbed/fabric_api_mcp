@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pydantic>=2.0
 requests
-fabrictestbed_extensions==2.0.0
+fabrictestbed_extensions==2.0.1
 fastmcp
 slowapi
 prometheus-client

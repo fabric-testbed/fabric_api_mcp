@@ -100,7 +100,7 @@ class NetworkSpec(BaseModel):
     type: Optional[str] = Field(None, description="Network type (L2PTP, L2Bridge, FABNetv4, etc.)")
     bandwidth: Optional[int] = Field(None, ge=1, description="Bandwidth in Gbps (L2PTP only)")
     nic: Optional[str] = Field(None, description="Explicit NIC model override")
-    subnet: Optional[str] = Field(None, description="IPv4 subnet for L2 networks (modify only)")
+    subnet: Optional[str] = Field(None, description="IPv4 subnet for L2 networks")
 
 
 class RemoveComponentSpec(BaseModel):
