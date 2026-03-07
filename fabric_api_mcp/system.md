@@ -652,7 +652,13 @@ sudo ip link set dev ens7 up
 # First call fabric_get_network_info to get subnet and gateway
 sudo ip addr add <ip_from_subnet>/24 dev ens7
 sudo ip link set dev ens7 up
-sudo ip route add <subnet> via <gateway> dev ens7
+# Route to FABNet supernet (NOT the per-site /24 subnet)
+sudo ip route add 10.128.0.0/10 via <gateway> dev ens7
+
+# L3 network (FABNetv6) — same pattern
+sudo ip addr add <ip_from_subnet>/64 dev ens7
+sudo ip link set dev ens7 up
+sudo ip route add 2602:FCFB:00::/40 via <gateway> dev ens7
 ```
 
 Users can always configure networking manually, even in local mode.
