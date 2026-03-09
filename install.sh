@@ -306,14 +306,14 @@ setup_remote() {
     ok "Token file already exists: $token_file"
   else
     info "Creating FABRIC token via fabric-cli..."
-    local cli_args=(tokens create --tokenlocation "$token_file")
+    local cli_args=(tokens create --location "$token_file")
     if $NO_BROWSER; then
       cli_args+=(--no-browser)
     fi
     "$venv_cli" "${cli_args[@]}" || {
       warn "Token creation failed or was cancelled."
       warn "You can create a token later:"
-      warn "  $venv_cli tokens create --tokenlocation $token_file"
+      warn "  $venv_cli tokens create --location $token_file"
       warn "Or download from: https://portal.fabric-testbed.net/experiments#manageTokens"
     }
   fi
@@ -406,10 +406,10 @@ JSONEOF
   echo ""
   echo "  To refresh your token:"
   if $INSTALL_LOCAL; then
-    echo "    $VENV_DIR/bin/fabric-cli tokens refresh --tokenlocation $CONFIG_DIR/tokens.json"
+    echo "    $VENV_DIR/bin/fabric-cli tokens refresh --location $CONFIG_DIR/tokens.json"
   fi
   if $INSTALL_REMOTE; then
-    echo "    $VENV_DIR/bin/fabric-cli tokens create --tokenlocation $INSTALL_DIR/id_token.json"
+    echo "    $VENV_DIR/bin/fabric-cli tokens create --location $INSTALL_DIR/id_token.json"
   fi
 
   echo ""
