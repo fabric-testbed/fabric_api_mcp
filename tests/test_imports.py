@@ -84,28 +84,47 @@ class TestNoVerifierIsWired:
     """The README states per-user rate limiting is unavailable and why.
 
     That claim rests on nothing in this package producing signature-verified
-    claims. Only two things can: constructing a verifier, or publishing
-    ``TokenClaims`` into the ``request.state`` slot ``request_claims()`` reads.
-    Checking the source is what makes this a real canary — a test that merely
+    claims. Three routes can:
+
+    1. constructing a verifier (``CredMgrVerifier``, or anything satisfying the
+       ``TokenVerifier`` protocol) and passing it as ``verifier=`` to
+       ``build_resolver`` / ``TokenResolver``;
+    2. building ``TokenClaims(..., verified=True)`` directly;
+    3. publishing claims into the ``request.state`` slot ``request_claims()``
+       consults first.
+
+    Checking the *source* is what makes this a real canary. A test that merely
     called ``request_claims()`` on a synthetic request would keep passing after a
-    verifying middleware was added, because no middleware would have run.
+    verifying middleware was added, because no middleware would have run — that
+    was the first version. The second version only looked for named verifier
+    types, so route 1 slipped past whenever the verifier was a custom protocol
+    implementation.
     """
 
-    #: Markers for the two mechanisms. Matched against identifiers, imports and
-    #: non-docstring literals only — the docstrings in rate_limit.py describe
-    #: this machinery in prose, and describing it is not wiring it.
-    VERIFIER_MARKERS = frozenset(
+    #: Names that appear only when verification is being wired. ``TokenVerifier``
+    #: is here because ``build_resolver(verifier=...)`` accepts *any* object
+    #: satisfying that protocol — verification can be enabled without ever
+    #: naming CredMgrVerifier, which an earlier version of this canary missed.
+    VERIFIER_NAMES = frozenset(
         {
             "CredMgrVerifier",
+            "TokenVerifier",
             "fabric_mcp_common.auth.verify",
             "CLAIMS_STATE_ATTR",
-            "fabric_token_claims",
         }
     )
 
-    @staticmethod
-    def _code_symbols(source: str) -> set[str]:
-        """Identifiers, imported names and live string literals — no docstrings."""
+    #: Keyword arguments that switch verification on. Matched structurally with
+    #: the value inspected: ``claims.verified`` is a legitimate *read* — it is
+    #: the guard in _rate_limit_key — whereas ``verified=True`` asserts it.
+    VERIFIER_KWARGS = frozenset({"verifier", "verified", "verify"})
+
+    #: The request.state slot request_claims() consults first.
+    CLAIMS_SLOT = "fabric_token_claims"
+
+    @classmethod
+    def _verification_findings(cls, source: str) -> set[str]:
+        """Signs that *source* wires verification, ignoring prose."""
         import ast
 
         tree = ast.parse(source)
@@ -122,21 +141,35 @@ class TestNoVerifierIsWired:
                 ):
                     docstrings.add(id(body[0].value))
 
-        symbols: set[str] = set()
+        findings: set[str] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name):
-                symbols.add(node.id)
-            elif isinstance(node, ast.Attribute):
-                symbols.add(node.attr)
-            elif isinstance(node, ast.alias):
-                symbols.add(node.name)
-                symbols.add((node.asname or "").strip())
-            elif isinstance(node, ast.ImportFrom):
-                symbols.add(node.module or "")
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if id(node) not in docstrings:
-                    symbols.add(node.value)
-        return {s for s in symbols if s}
+            # 1. Named verifier types, the verify module, the slot constant.
+            if isinstance(node, ast.Name) and node.id in cls.VERIFIER_NAMES:
+                findings.add(node.id)
+            elif isinstance(node, ast.Attribute) and node.attr in cls.VERIFIER_NAMES:
+                findings.add(node.attr)
+            elif isinstance(node, ast.alias) and node.name in cls.VERIFIER_NAMES:
+                findings.add(node.name)
+            elif isinstance(node, ast.ImportFrom) and node.module in cls.VERIFIER_NAMES:
+                findings.add(node.module)
+            # 2. The slot written as a literal, outside a docstring.
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value == cls.CLAIMS_SLOT
+                and id(node) not in docstrings
+            ):
+                findings.add(cls.CLAIMS_SLOT)
+            # 3. Enabling keywords — value checked, so an explicit opt-out
+            #    (verifier=None, verify=False) does not register.
+            elif isinstance(node, ast.keyword) and node.arg in cls.VERIFIER_KWARGS:
+                disabled = isinstance(node.value, ast.Constant) and node.value.value in (
+                    False,
+                    None,
+                )
+                if not disabled:
+                    findings.add(f"{node.arg}=")
+        return findings
 
     @classmethod
     def _package_sources(cls):
@@ -147,20 +180,52 @@ class TestNoVerifierIsWired:
         root = pathlib.Path(fabric_api_mcp.__file__).resolve().parent
         return {p: p.read_text() for p in root.rglob("*.py")}
 
-    def test_the_canary_detects_wiring_when_present(self):
-        # A guard that cannot fire is worse than none, so prove it fires.
+    def test_canary_catches_a_named_verifier(self):
         wired = "from fabric_mcp_common.auth.verify import CredMgrVerifier\nv = CredMgrVerifier()\n"
-        assert self.VERIFIER_MARKERS & self._code_symbols(wired)
+        assert self._verification_findings(wired)
 
-    def test_the_canary_ignores_prose(self):
-        prose = '"""Enabling it needs CredMgrVerifier on request.state.fabric_token_claims."""\n'
-        assert not (self.VERIFIER_MARKERS & self._code_symbols(prose))
+    def test_canary_catches_a_verifier_injected_into_the_resolver(self):
+        # The path the first version of this canary missed entirely:
+        # build_resolver takes any TokenVerifier, so verification can be wired
+        # without CredMgrVerifier appearing anywhere.
+        wired = "r = build_resolver(local_mode=False, verifier=MyOwnVerifier())\n"
+        assert "verifier=" in self._verification_findings(wired)
+
+    def test_canary_catches_a_verifier_typed_only_by_protocol(self):
+        wired = "def make(v: TokenVerifier):\n    return v\n"
+        assert "TokenVerifier" in self._verification_findings(wired)
+
+    def test_canary_catches_claims_constructed_as_verified(self):
+        wired = "c = TokenClaims(payload, verified=True)\n"
+        assert "verified=" in self._verification_findings(wired)
+
+    def test_canary_catches_a_write_to_the_state_slot(self):
+        wired = 'setattr(request.state, "fabric_token_claims", claims)\n'
+        assert self.CLAIMS_SLOT in self._verification_findings(wired)
+
+    def test_canary_ignores_reading_the_verified_flag(self):
+        # _rate_limit_key does exactly this. It is the guard, not the wiring.
+        assert not self._verification_findings(
+            "if claims.verified and claims.sub:\n    pass\n"
+        )
+
+    def test_canary_ignores_an_explicit_opt_out(self):
+        assert not self._verification_findings(
+            "r = build_resolver(verifier=None, verify=False)\n"
+        )
+
+    def test_canary_ignores_prose(self):
+        prose = (
+            '"""Needs a CredMgrVerifier published to request.state.fabric_token_claims,\n'
+            'or passed as verifier= to build_resolver."""\n'
+        )
+        assert not self._verification_findings(prose)
 
     def test_package_does_not_produce_verified_claims(self):
         hits = {
-            path.name: sorted(self.VERIFIER_MARKERS & self._code_symbols(text))
+            path.name: sorted(self._verification_findings(text))
             for path, text in self._package_sources().items()
-            if self.VERIFIER_MARKERS & self._code_symbols(text)
+            if self._verification_findings(text)
         }
         assert not hits, (
             f"verification appears to be wired ({hits}). If that is intended, "
