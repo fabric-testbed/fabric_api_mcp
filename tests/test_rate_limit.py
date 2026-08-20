@@ -223,20 +223,17 @@ class TestVerifiedSubject:
         }
         assert keys == {DIRECT_PEER}
 
-    def test_no_real_request_can_produce_verified_claims(self, trusted_proxies):
-        # Documents why step 1 of the key ordering never fires: this server has
-        # no verifier wired, and request_claims() takes none, so its claims are
-        # always verified=False. Keeps the README honest — per-user keying is
-        # not a configuration switch. If this ever fails, verification was
-        # added and the docs need updating with it.
+    def test_request_claims_does_not_verify_signatures(self):
+        # Narrow, and named for what it checks: the helper the key uses performs
+        # an unverified payload decode. This says nothing about the app's wiring
+        # — see test_app_wires_no_verifier for that.
         from fabric_mcp_common.integrations.starlette import request_claims
 
-        trusted_proxies("172.16.0.0/12")
         claims = request_claims(make_request(token=forge_jwt(sub="someone")))
         assert claims.sub == "someone"
         assert claims.verified is False
 
-    def test_verified_claims_come_only_from_the_request_state_slot(self):
+    def test_the_request_state_slot_supplies_verified_claims(self):
         # The documented enabling mechanism: request_claims() returns whatever
         # TokenClaims a middleware left on request.state, so that is where a
         # verifier would publish. Asserted so the README instruction cannot rot.

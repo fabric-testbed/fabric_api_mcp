@@ -80,6 +80,133 @@ class TestLazyImports:
         from fabric_mcp_common.auth import read_token_from_file  # noqa: F401
 
 
+class TestNoVerifierIsWired:
+    """The README states per-user rate limiting is unavailable and why.
+
+    That claim rests on nothing in this package producing signature-verified
+    claims. Only two things can: constructing a verifier, or publishing
+    ``TokenClaims`` into the ``request.state`` slot ``request_claims()`` reads.
+    Checking the source is what makes this a real canary — a test that merely
+    called ``request_claims()`` on a synthetic request would keep passing after a
+    verifying middleware was added, because no middleware would have run.
+    """
+
+    #: Markers for the two mechanisms. Matched against identifiers, imports and
+    #: non-docstring literals only — the docstrings in rate_limit.py describe
+    #: this machinery in prose, and describing it is not wiring it.
+    VERIFIER_MARKERS = frozenset(
+        {
+            "CredMgrVerifier",
+            "fabric_mcp_common.auth.verify",
+            "CLAIMS_STATE_ATTR",
+            "fabric_token_claims",
+        }
+    )
+
+    @staticmethod
+    def _code_symbols(source: str) -> set[str]:
+        """Identifiers, imported names and live string literals — no docstrings."""
+        import ast
+
+        tree = ast.parse(source)
+
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                body = getattr(node, "body", None)
+                if (
+                    body
+                    and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)
+                ):
+                    docstrings.add(id(body[0].value))
+
+        symbols: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                symbols.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                symbols.add(node.attr)
+            elif isinstance(node, ast.alias):
+                symbols.add(node.name)
+                symbols.add((node.asname or "").strip())
+            elif isinstance(node, ast.ImportFrom):
+                symbols.add(node.module or "")
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) not in docstrings:
+                    symbols.add(node.value)
+        return {s for s in symbols if s}
+
+    @classmethod
+    def _package_sources(cls):
+        import pathlib
+
+        import fabric_api_mcp
+
+        root = pathlib.Path(fabric_api_mcp.__file__).resolve().parent
+        return {p: p.read_text() for p in root.rglob("*.py")}
+
+    def test_the_canary_detects_wiring_when_present(self):
+        # A guard that cannot fire is worse than none, so prove it fires.
+        wired = "from fabric_mcp_common.auth.verify import CredMgrVerifier\nv = CredMgrVerifier()\n"
+        assert self.VERIFIER_MARKERS & self._code_symbols(wired)
+
+    def test_the_canary_ignores_prose(self):
+        prose = '"""Enabling it needs CredMgrVerifier on request.state.fabric_token_claims."""\n'
+        assert not (self.VERIFIER_MARKERS & self._code_symbols(prose))
+
+    def test_package_does_not_produce_verified_claims(self):
+        hits = {
+            path.name: sorted(self.VERIFIER_MARKERS & self._code_symbols(text))
+            for path, text in self._package_sources().items()
+            if self.VERIFIER_MARKERS & self._code_symbols(text)
+        }
+        assert not hits, (
+            f"verification appears to be wired ({hits}). If that is intended, "
+            "per-user rate limiting is now reachable — update the README's "
+            "'Per-user limiting: what it would take' section and the "
+            "_rate_limit_key docstring, which both state it is not."
+        )
+
+    @staticmethod
+    def _declared_extras(text: str) -> set[str]:
+        """Extras requested of fabric_mcp_common anywhere in a manifest.
+
+        Parsed rather than substring-matched: a naive `"[verify]" in text` check
+        misses `[metrics,verify]`, which is how it would realistically be
+        written. (It did — a mutation test caught this test not guarding its
+        claim.)
+        """
+        import re
+
+        extras: set[str] = set()
+        for group in re.findall(r"fabric[_-]mcp[_-]common\s*\[([^\]]*)\]", text):
+            extras |= {e.strip() for e in group.split(",") if e.strip()}
+        return extras
+
+    def test_the_extras_parser_sees_a_combined_group(self):
+        # Prove the parser catches the realistic spelling before trusting it.
+        assert "verify" in self._declared_extras("fabric_mcp_common[metrics,verify]>=0.1.0")
+        assert "verify" in self._declared_extras("fabric-mcp-common[verify]")
+        assert "verify" not in self._declared_extras("fabric_mcp_common[metrics]>=0.1.0")
+
+    def test_verify_extra_is_not_a_declared_dependency(self):
+        # The [verify] extra is what would make CredMgrVerifier importable.
+        import pathlib
+
+        import fabric_api_mcp
+
+        repo = pathlib.Path(fabric_api_mcp.__file__).resolve().parent.parent
+        for name in ("pyproject.toml", "requirements.txt"):
+            manifest = repo / name
+            if manifest.is_file():
+                assert "verify" not in self._declared_extras(manifest.read_text()), (
+                    f"{name} pulls in the verify extra; see the note in "
+                    "test_package_does_not_produce_verified_claims"
+                )
+
+
 class TestPackageSurface:
     def test_auth_exports_only_the_resolver(self):
         import fabric_api_mcp.auth as auth

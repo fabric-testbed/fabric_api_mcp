@@ -41,7 +41,16 @@ def nginx_ip(compose):
 
 
 class TestProxyIsPinned:
-    def test_nginx_has_a_fixed_frontend_address(self, nginx_ip):
+    def test_nginx_declares_a_fixed_frontend_address(self, compose):
+        # Assert the key's presence here rather than relying on the fixture
+        # raising KeyError, so a missing pin is a failure with a message.
+        frontend = compose["services"]["nginx"]["networks"]["frontend"]
+        assert isinstance(frontend, dict) and "ipv4_address" in frontend, (
+            "nginx has no pinned ipv4_address; RATE_LIMIT_TRUSTED_PROXIES "
+            "cannot name a stable peer"
+        )
+
+    def test_that_address_is_private(self, nginx_ip):
         assert nginx_ip.is_private
 
     def test_that_address_is_inside_the_declared_subnet(self, compose, nginx_ip):
@@ -71,10 +80,13 @@ class TestTrustMatchesTheProxy:
             f"Got {[str(n) for n in trusted]}"
         )
 
-    def test_no_broad_private_range_is_trusted(self, trusted):
+    def test_every_entry_is_a_single_host(self, trusted):
+        # Version-agnostic: /32 for IPv4, /128 for IPv6. An earlier form of this
+        # test read `prefixlen >= 32 or version == 6`, which passed *any* IPv6
+        # network — including fc00::/7, the exact breadth it meant to forbid.
         for net in trusted:
-            assert net.prefixlen >= 32 or net.version == 6, (
-                f"{net} is a range, not a host — too broad to trust"
+            assert net.prefixlen == net.max_prefixlen, (
+                f"{net} spans {net.num_addresses} addresses; expected a single host"
             )
 
 
