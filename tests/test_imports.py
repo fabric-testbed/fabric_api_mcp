@@ -143,16 +143,27 @@ class TestNoVerifierIsWired:
 
         findings: set[str] = set()
         for node in ast.walk(tree):
-            # 1. Named verifier types, the verify module, the slot constant.
+            # 1. Named verifier types, the verify module.
             if isinstance(node, ast.Name) and node.id in cls.VERIFIER_NAMES:
                 findings.add(node.id)
-            elif isinstance(node, ast.Attribute) and node.attr in cls.VERIFIER_NAMES:
-                findings.add(node.attr)
             elif isinstance(node, ast.alias) and node.name in cls.VERIFIER_NAMES:
                 findings.add(node.name)
             elif isinstance(node, ast.ImportFrom) and node.module in cls.VERIFIER_NAMES:
                 findings.add(node.module)
-            # 2. The slot written as a literal, outside a docstring.
+            elif isinstance(node, ast.Attribute):
+                # 2. The state slot, in any position: `request.state.<slot> =`
+                #    is the spelling the README documents, and it is an
+                #    attribute, not a string. Matching only the literal missed it.
+                if node.attr in (cls.CLAIMS_SLOT, *cls.VERIFIER_NAMES):
+                    findings.add(node.attr)
+                # 3. Post-construction mutation: TokenResolver keeps .verifier
+                #    and .verify, so assigning them enables verification just as
+                #    a constructor argument would. Store context only, so the
+                #    `claims.verified` *read* in _rate_limit_key does not fire.
+                elif node.attr in cls.VERIFIER_KWARGS and isinstance(node.ctx, ast.Store):
+                    findings.add(f".{node.attr}=")
+            # 4. The slot as a string literal, e.g. via setattr(), outside a
+            #    docstring.
             elif (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
@@ -160,7 +171,7 @@ class TestNoVerifierIsWired:
                 and id(node) not in docstrings
             ):
                 findings.add(cls.CLAIMS_SLOT)
-            # 3. Enabling keywords — value checked, so an explicit opt-out
+            # 5. Enabling keywords — value checked, so an explicit opt-out
             #    (verifier=None, verify=False) does not register.
             elif isinstance(node, ast.keyword) and node.arg in cls.VERIFIER_KWARGS:
                 disabled = isinstance(node.value, ast.Constant) and node.value.value in (
@@ -199,9 +210,37 @@ class TestNoVerifierIsWired:
         wired = "c = TokenClaims(payload, verified=True)\n"
         assert "verified=" in self._verification_findings(wired)
 
-    def test_canary_catches_a_write_to_the_state_slot(self):
-        wired = 'setattr(request.state, "fabric_token_claims", claims)\n'
+    # The state slot has two spellings and an earlier version of this canary
+    # only matched the string one — which is also the only one the earlier test
+    # exercised. Both are checked now.
+    @pytest.mark.parametrize(
+        "wired",
+        [
+            pytest.param(
+                "request.state.fabric_token_claims = claims\n", id="attribute-assignment"
+            ),
+            pytest.param(
+                'setattr(request.state, "fabric_token_claims", claims)\n', id="setattr"
+            ),
+            pytest.param(
+                "req.state.fabric_token_claims = TokenClaims(p)\n", id="other-receiver"
+            ),
+        ],
+    )
+    def test_canary_catches_a_write_to_the_state_slot(self, wired):
         assert self.CLAIMS_SLOT in self._verification_findings(wired)
+
+    @pytest.mark.parametrize(
+        "wired",
+        [
+            pytest.param("resolver.verifier = SomeVerifier()\n", id="set-verifier"),
+            pytest.param("resolver.verify = True\n", id="set-verify-flag"),
+        ],
+    )
+    def test_canary_catches_post_construction_mutation(self, wired):
+        # TokenResolver stores .verifier and .verify, so assigning them after
+        # construction enables verification exactly as a constructor arg would.
+        assert self._verification_findings(wired)
 
     def test_canary_ignores_reading_the_verified_flag(self):
         # _rate_limit_key does exactly this. It is the guard, not the wiring.
