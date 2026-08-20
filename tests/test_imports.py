@@ -162,15 +162,18 @@ class TestNoVerifierIsWired:
                 #    `claims.verified` *read* in _rate_limit_key does not fire.
                 elif node.attr in cls.VERIFIER_KWARGS and isinstance(node.ctx, ast.Store):
                     findings.add(f".{node.attr}=")
-            # 4. The slot as a string literal, e.g. via setattr(), outside a
-            #    docstring.
+            # 4. Any of these names as a string literal outside a docstring.
+            #    This is what covers every *dynamic* write —
+            #    setattr(resolver, "verifier", V()), vars(r)["verify"] = True,
+            #    r.__dict__["verifier"] = V() — all of which route through a
+            #    literal and so slipped past the attribute-store rule above.
             elif (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
-                and node.value == cls.CLAIMS_SLOT
+                and node.value in {cls.CLAIMS_SLOT, *cls.VERIFIER_KWARGS}
                 and id(node) not in docstrings
             ):
-                findings.add(cls.CLAIMS_SLOT)
+                findings.add(node.value)
             # 5. Enabling keywords — value checked, so an explicit opt-out
             #    (verifier=None, verify=False) does not register.
             elif isinstance(node, ast.keyword) and node.arg in cls.VERIFIER_KWARGS:
@@ -230,17 +233,31 @@ class TestNoVerifierIsWired:
     def test_canary_catches_a_write_to_the_state_slot(self, wired):
         assert self.CLAIMS_SLOT in self._verification_findings(wired)
 
+    # TokenResolver stores .verifier and .verify, so setting them after
+    # construction enables verification exactly as a constructor arg would.
+    # Every write route is listed: the attribute-store rule alone missed the
+    # dynamic ones, which all go through a string literal instead.
     @pytest.mark.parametrize(
         "wired",
         [
-            pytest.param("resolver.verifier = SomeVerifier()\n", id="set-verifier"),
-            pytest.param("resolver.verify = True\n", id="set-verify-flag"),
+            pytest.param("resolver.verifier = SomeVerifier()\n", id="attribute"),
+            pytest.param("resolver.verify = True\n", id="attribute-flag"),
+            pytest.param(
+                'setattr(resolver, "verifier", SomeVerifier())\n', id="setattr"
+            ),
+            pytest.param('setattr(resolver, "verify", True)\n', id="setattr-flag"),
+            pytest.param('vars(resolver)["verifier"] = V()\n', id="vars-subscript"),
+            pytest.param(
+                'resolver.__dict__["verify"] = True\n', id="dunder-dict-subscript"
+            ),
+            pytest.param(
+                'object.__setattr__(resolver, "verifier", V())\n', id="object-setattr"
+            ),
+            pytest.param("resolver.verify |= True\n", id="augmented-assignment"),
         ],
     )
     def test_canary_catches_post_construction_mutation(self, wired):
-        # TokenResolver stores .verifier and .verify, so assigning them after
-        # construction enables verification exactly as a constructor arg would.
-        assert self._verification_findings(wired)
+        assert self._verification_findings(wired), f"missed: {wired.strip()}"
 
     def test_canary_ignores_reading_the_verified_flag(self):
         # _rate_limit_key does exactly this. It is the guard, not the wiring.
