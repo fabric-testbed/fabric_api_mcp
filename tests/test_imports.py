@@ -127,14 +127,23 @@ class TestNoVerifierIsWired:
         }
     )
 
-    #: Names specific enough to mean *token* verification wherever they appear.
+    #: Provenance gate. Nothing here is FABRIC token verification unless it came
+    #: from this package, and every name involved is a word other libraries use:
+    #: a scan of site-packages found ``TokenVerifier`` 18 times in the ``mcp``
+    #: SDK (an unrelated OAuth concept, and a direct dependency of this server),
+    #: ``verifier=`` in authlib's OAuth1 client, and ``.verifier=`` in cffi.
+    #: Matching on bare names would fail CI the moment this package type-hints
+    #: MCP's own TokenVerifier.
+    FMC_ROOT = "fabric_mcp_common"
+
+    #: Names specific enough to mean *token* verification — but only when bound
+    #: from FMC_ROOT (see above).
     #:
-    #: Bare ``verify`` and bare ``verified`` are both excluded, because both are
-    #: ambiguous in this domain and a false alarm blocks an unrelated change:
-    #: ``verify`` is TLS vocabulary (``requests.get(url, verify=ca_bundle)``,
-    #: ``session.verify = path``), and ``verified`` is account/email vocabulary
-    #: (``user.verified = True``, ``UserRecord(verified=True)``) in a server that
-    #: serves user and project records.
+    #: Bare ``verify`` and bare ``verified`` are excluded entirely, being
+    #: ambiguous in this domain: ``verify`` is TLS vocabulary
+    #: (``requests.get(url, verify=ca_bundle)``) and ``verified`` is
+    #: account/email vocabulary (``user.verified = True``) in a server that
+    #: serves user records.
     #:
     #: ``_verified`` is included: it is TokenClaims' private slot, and assigning
     #: it is the only way to flip an existing instance — ``claims.verified`` is a
@@ -151,11 +160,47 @@ class TestNoVerifierIsWired:
         # resolve() verifies only when self.verifier is not None — so a verifier
         # is always present when verification is genuinely on.
         "verify": frozenset({"build_resolver", "TokenResolver"}),
+        # Scoped too: `verifier=` is OAuth1's protocol parameter in authlib, so
+        # an unscoped match fired on client.parse_authorization_response(verifier=…)
+        # in a module that merely imports from this package.
+        "verifier": frozenset({"build_resolver", "TokenResolver"}),
         "verified": frozenset({"TokenClaims"}),
     }
 
+    @classmethod
+    def _fmc_bindings(cls, tree) -> set[str]:
+        """Local names bound to something imported from fabric_mcp_common.
+
+        This is the provenance gate: ``TokenVerifier`` imported from the MCP SDK
+        is a different thing from ``TokenVerifier`` imported from here, and only
+        the latter is a sign of FABRIC token verification.
+        """
+        import ast
+
+        # (original name, local name) pairs. Keeping the original is what lets a
+        # seed be looked up by canonical name when the import was aliased —
+        # `TokenClaims as TC` binds "TC", and intersecting canonical names with
+        # local names alone produced an empty seed and a silent canary.
+        pairs: set[tuple[str, str]] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if (node.module or "").split(".")[0] == cls.FMC_ROOT:
+                    for alias in node.names:
+                        pairs.add((alias.name, alias.asname or alias.name))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root == cls.FMC_ROOT:
+                        pairs.add((root, alias.asname or root))
+        return pairs
+
+    @classmethod
+    def _seed(cls, canonical, pairs) -> frozenset:
+        """Local names for *canonical* symbols actually imported from the package."""
+        return frozenset(local for original, local in pairs if original in canonical)
+
     @staticmethod
-    def _local_aliases(tree, canonical: frozenset) -> set[str]:
+    def _local_aliases(tree, canonical) -> set[str]:
         """Every local name that reaches *canonical*.
 
         Follows ``import X as Y``, ``Y = X`` rebindings and ``class Y(X)``
@@ -200,6 +245,21 @@ class TestNoVerifierIsWired:
     #: The request.state slot request_claims() consults first.
     CLAIMS_SLOT = "fabric_token_claims"
 
+    #: Prepended to every snippet below, because a real module in this package
+    #: imports from the library. It is applied to the *silence* cases too, so
+    #: those assert something: without it they would pass merely by failing the
+    #: provenance gate, which is not what they are meant to prove.
+    #: Mirrors what a real module here imports. Deliberately does *not* import
+    #: TokenVerifier: a module that imported both this package's TokenVerifier
+    #: and the MCP SDK's under the same local name would be genuinely ambiguous,
+    #: and no static analysis could separate them. Snippets that need it import
+    #: it themselves.
+    FMC_PRELUDE = (
+        "from fabric_mcp_common.auth import TokenClaims\n"
+        "from fabric_mcp_common.auth.resolver import TokenResolver\n"
+        "from fabric_mcp_common.integrations.fastmcp import build_resolver\n"
+    )
+
     #: Literals worth matching, for dynamic writes like
     #: ``setattr(resolver, "verifier", V())`` or
     #: ``setattr(claims, "_verified", True)``.
@@ -231,10 +291,18 @@ class TestNoVerifierIsWired:
         # Ambiguous keywords count only inside the calls that give them their
         # token meaning. Collected first because the walk below reaches keyword
         # nodes without their enclosing Call.
+        # Only names that came from fabric_mcp_common can mean FABRIC token
+        # verification. Seeding the alias search from that set is what keeps the
+        # MCP SDK's own TokenVerifier, authlib's OAuth1 verifier= and cffi's
+        # self.verifier out of the results.
+        fmc = cls._fmc_bindings(tree)
         scopes = {
-            arg: cls._local_aliases(tree, canonical)
+            arg: cls._local_aliases(tree, cls._seed(canonical, fmc))
             for arg, canonical in cls.KWARG_SCOPES.items()
         }
+        fmc_verifier_names = cls._local_aliases(
+            tree, cls._seed(cls.VERIFIER_NAMES, fmc)
+        )
 
         scoped_kwargs: set[int] = set()
         unpacked: set[str] = set()
@@ -267,26 +335,34 @@ class TestNoVerifierIsWired:
                         ):
                             unpacked.add(f"**{key.value}")
 
+        # Everything except the slot name is gated on provenance. The slot,
+        # `fabric_token_claims`, is specific enough to stand alone — the
+        # site-packages scan found no use of it outside this project.
+        gated = bool(fmc)
+
         findings: set[str] = set(unpacked)
         for node in ast.walk(tree):
-            # 1. Library-specific verifier types and modules.
-            if isinstance(node, ast.Name) and node.id in cls.VERIFIER_NAMES:
+            # 1. Verifier types and the verify module, bound from this package.
+            if isinstance(node, ast.Name) and node.id in fmc_verifier_names:
                 findings.add(node.id)
-            elif isinstance(node, ast.alias) and node.name in cls.VERIFIER_NAMES:
-                findings.add(node.name)
             elif isinstance(node, ast.ImportFrom) and node.module in cls.VERIFIER_NAMES:
                 findings.add(node.module)
             elif isinstance(node, ast.Attribute):
                 # 2. The state slot in any position: `request.state.<slot> =` is
                 #    the spelling the README documents, and it is an attribute,
                 #    not a string.
-                if node.attr in (cls.CLAIMS_SLOT, *cls.VERIFIER_NAMES):
+                if node.attr == cls.CLAIMS_SLOT or node.attr in fmc_verifier_names:
                     findings.add(node.attr)
                 # 3. Post-construction mutation of .verifier / ._verified. Store
                 #    context only, so the `claims.verified` read in
                 #    _rate_limit_key does not fire. `.verify` and `.verified` are
-                #    excluded as ambiguous — see ENABLING_NAMES.
-                elif node.attr in cls.ENABLING_NAMES and isinstance(node.ctx, ast.Store):
+                #    excluded as ambiguous — see ENABLING_NAMES. Gated, because
+                #    cffi assigns self.verifier for something else entirely.
+                elif (
+                    gated
+                    and node.attr in cls.ENABLING_NAMES
+                    and isinstance(node.ctx, ast.Store)
+                ):
                     findings.add(f".{node.attr}=")
             # 4. The slot, or "verifier", as a literal outside a docstring. This
             #    is what covers dynamic writes: setattr(resolver, "verifier", V()),
@@ -294,15 +370,17 @@ class TestNoVerifierIsWired:
             elif (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
-                and node.value in {cls.CLAIMS_SLOT, *cls.ENABLING_LITERALS}
                 and id(node) not in docstrings
+                and (
+                    node.value == cls.CLAIMS_SLOT
+                    or (gated and node.value in cls.ENABLING_LITERALS)
+                )
             ):
                 findings.add(node.value)
-            # 5. Keywords: verifier= anywhere; verify= and verified= only in the
-            #    calls that give them their token meaning.
-            elif isinstance(node, ast.keyword) and (
-                node.arg in cls.ENABLING_NAMES or id(node) in scoped_kwargs
-            ):
+            # 5. Keywords: all three are scoped to the calls that give them their
+            #    token meaning, so TLS `verify=`, OAuth1 `verifier=` and
+            #    account `verified=` elsewhere are ignored.
+            elif isinstance(node, ast.keyword) and id(node) in scoped_kwargs:
                 if enabled(node.value):
                     findings.add(f"{node.arg}=")
         return findings
@@ -318,22 +396,25 @@ class TestNoVerifierIsWired:
 
     def test_canary_catches_a_named_verifier(self):
         wired = "from fabric_mcp_common.auth.verify import CredMgrVerifier\nv = CredMgrVerifier()\n"
-        assert self._verification_findings(wired)
+        assert self._verification_findings(self.FMC_PRELUDE + wired)
 
     def test_canary_catches_a_verifier_injected_into_the_resolver(self):
         # The path the first version of this canary missed entirely:
         # build_resolver takes any TokenVerifier, so verification can be wired
         # without CredMgrVerifier appearing anywhere.
         wired = "r = build_resolver(local_mode=False, verifier=MyOwnVerifier())\n"
-        assert "verifier=" in self._verification_findings(wired)
+        assert "verifier=" in self._verification_findings(self.FMC_PRELUDE + wired)
 
     def test_canary_catches_a_verifier_typed_only_by_protocol(self):
-        wired = "def make(v: TokenVerifier):\n    return v\n"
-        assert "TokenVerifier" in self._verification_findings(wired)
+        wired = (
+            "from fabric_mcp_common.auth.resolver import TokenVerifier\n"
+            "def make(v: TokenVerifier):\n    return v\n"
+        )
+        assert "TokenVerifier" in self._verification_findings(self.FMC_PRELUDE + wired)
 
     def test_canary_catches_claims_constructed_as_verified(self):
         wired = "c = TokenClaims(payload, verified=True)\n"
-        assert "verified=" in self._verification_findings(wired)
+        assert "verified=" in self._verification_findings(self.FMC_PRELUDE + wired)
 
     # The state slot has two spellings and an earlier version of this canary
     # only matched the string one — which is also the only one the earlier test
@@ -353,7 +434,7 @@ class TestNoVerifierIsWired:
         ],
     )
     def test_canary_catches_a_write_to_the_state_slot(self, wired):
-        assert self.CLAIMS_SLOT in self._verification_findings(wired)
+        assert self.CLAIMS_SLOT in self._verification_findings(self.FMC_PRELUDE + wired)
 
     # TokenResolver stores .verifier and .verify, so setting them after
     # construction enables verification exactly as a constructor arg would.
@@ -383,7 +464,7 @@ class TestNoVerifierIsWired:
         ],
     )
     def test_canary_catches_post_construction_mutation(self, wired):
-        assert self._verification_findings(wired), f"missed: {wired.strip()}"
+        assert self._verification_findings(self.FMC_PRELUDE + wired), f"missed: {wired.strip()}"
 
     @pytest.mark.parametrize(
         "wired",
@@ -428,7 +509,7 @@ class TestNoVerifierIsWired:
         ],
     )
     def test_ambiguous_keywords_count_in_their_own_calls(self, wired):
-        assert self._verification_findings(wired), f"missed: {wired.strip()}"
+        assert self._verification_findings(self.FMC_PRELUDE + wired), f"missed: {wired.strip()}"
 
     def test_claims_verified_is_not_assignable(self):
         # Justifies excluding `.verified=`: matching it would guard a route that
@@ -480,10 +561,25 @@ class TestNoVerifierIsWired:
                 'u = UserRecord(verified=True)\n',
                 id="aliased-import-unrelated-constructor",
             ),
+            # Found by scanning site-packages: the MCP SDK — a direct dependency
+            # of this server — has its own unrelated TokenVerifier, 18 times.
+            pytest.param(
+                "from mcp.server.auth.provider import TokenVerifier\n"
+                "def f(v: TokenVerifier):\n    return v\n",
+                id="mcp-sdk-token-verifier",
+            ),
+            # Also found by that scan: verifier= is OAuth1's protocol parameter.
+            pytest.param(
+                "r = client.parse_authorization_response(verifier=v)\n",
+                id="oauth1-verifier-kwarg",
+            ),
+            pytest.param(
+                "code_verifier = generate_code_verifier()\n", id="pkce-code-verifier"
+            ),
         ],
     )
     def test_canary_does_not_fire_on_unrelated_code(self, benign):
-        found = self._verification_findings(benign)
+        found = self._verification_findings(self.FMC_PRELUDE + benign)
         assert not found, f"false positive on {benign.strip()!r}: {sorted(found)}"
 
     def test_canary_ignores_reading_the_verified_flag(self):
