@@ -38,6 +38,7 @@ class ServerConfig:
     # Rate limiting (server mode)
     rate_limit: str
     rate_limit_enabled: bool
+    rate_limit_trust_proxy_headers: bool
 
     # Metrics
     metrics_enabled: bool
@@ -81,6 +82,15 @@ class ServerConfig:
             rate_limit=os.environ.get("RATE_LIMIT", "60/minute"),
             rate_limit_enabled=os.environ.get("RATE_LIMIT_ENABLED", "0" if is_local else "1")
                                not in ("0", "false", "False", ""),
+
+            # Whether X-Real-IP / X-Forwarded-For may supply the rate-limit key.
+            # Defaults OFF: those headers are client-supplied, so trusting them
+            # lets a caller mint a fresh bucket per spoofed value and bypass the
+            # limit entirely. Enable only when a trusted reverse proxy is
+            # guaranteed to overwrite them.
+            rate_limit_trust_proxy_headers=os.environ.get(
+                "RATE_LIMIT_TRUST_PROXY_HEADERS", "0"
+            ) not in ("0", "false", "False", ""),
 
             # Metrics
             metrics_enabled=os.environ.get(

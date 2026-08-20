@@ -17,6 +17,7 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from fabric_mcp_common.net import DEFAULT_FORWARDED_HEADERS
 from fabric_mcp_common.integrations.starlette import rate_limit_key, request_claims
 
 from fabric_api_mcp.config import config
@@ -30,10 +31,23 @@ def _rate_limit_key(request: Request) -> str:
 
     Uses the JWT `sub` claim as the key for authenticated requests,
     falling back to client IP for unauthenticated requests.
+
+    Forwarded headers are consulted for that fallback only when
+    ``RATE_LIMIT_TRUST_PROXY_HEADERS`` is set. They are client-supplied, so
+    trusting them unconditionally would let a caller rotate ``X-Forwarded-For``
+    to mint a fresh bucket per request and bypass the limit outright.
+    Authenticated callers are unaffected either way: they key on ``sub``.
     """
-    # Keys on the `sub` claim, then the proxy-aware client IP, then SlowAPI's
-    # own remote-address resolution when nothing else identifies the caller.
-    return rate_limit_key(request, default=get_remote_address(request))
+    # Keys on the `sub` claim, then the client IP, then SlowAPI's own
+    # remote-address resolution when nothing else identifies the caller.
+    forwarded_headers = (
+        DEFAULT_FORWARDED_HEADERS if config.rate_limit_trust_proxy_headers else ()
+    )
+    return rate_limit_key(
+        request,
+        forwarded_headers=forwarded_headers,
+        default=get_remote_address(request),
+    )
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:

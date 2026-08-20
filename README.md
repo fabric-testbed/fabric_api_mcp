@@ -289,6 +289,7 @@ Server respects these (all optional unless stated):
 | `CACHE_MAX_FETCH` | `5000` | Cache fetch limit per cycle |
 | `MAX_FETCH_FOR_SORT` | `5000` | Max fetch when client asks to sort |
 | `METRICS_ENABLED` | `1` (server) / `0` (local) | Enable Prometheus metrics + `/metrics` endpoint |
+| `RATE_LIMIT_TRUST_PROXY_HEADERS` | `0` | `1` to let `X-Real-IP`/`X-Forwarded-For` supply the rate-limit key. Set **only** behind a reverse proxy that overwrites them — these headers are client-supplied, so trusting them otherwise lets a caller rotate the value to get a fresh bucket per request and bypass the limit. Authenticated callers key on the JWT `sub` either way. |
 | `FABRIC_LOCAL_MODE` | `0` | `1` to enable local/stdio mode (no Bearer token required) |
 | `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport (`stdio` or `http`) |
 

@@ -45,6 +45,23 @@ class TestDefaults:
         assert cfg.rate_limit == "60/minute"
 
 
+class TestProxyHeaderTrust:
+    def test_defaults_off_so_the_limit_cannot_be_spoofed_away(self, clean_env):
+        # X-Real-IP / X-Forwarded-For are client-supplied. Trusting them by
+        # default would let a caller rotate the header for a fresh bucket per
+        # request, making the rate limit no protection at all.
+        assert ServerConfig.from_env().rate_limit_trust_proxy_headers is False
+
+    def test_can_be_enabled_behind_a_trusted_proxy(self, clean_env):
+        clean_env.setenv("RATE_LIMIT_TRUST_PROXY_HEADERS", "1")
+        assert ServerConfig.from_env().rate_limit_trust_proxy_headers is True
+
+    @pytest.mark.parametrize("value", FALSEY)
+    def test_falsey_values_keep_it_off(self, clean_env, value):
+        clean_env.setenv("RATE_LIMIT_TRUST_PROXY_HEADERS", value)
+        assert ServerConfig.from_env().rate_limit_trust_proxy_headers is False
+
+
 class TestLocalModeFlipsDefaults:
     """Local mode is stdio and single-user, so limits and metrics default off."""
 

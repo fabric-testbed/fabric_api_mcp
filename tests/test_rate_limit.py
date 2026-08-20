@@ -41,14 +41,54 @@ def exceeded(detail="60 per 1 minute"):
 
 
 class TestRateLimitKey:
-    def test_falls_back_to_client_ip_when_unauthenticated(self):
+    def test_falls_back_to_client_ip_when_unauthenticated(self, monkeypatch):
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", False)
         assert rl._rate_limit_key(make_request(client_host="198.51.100.4")) == "198.51.100.4"
 
-    def test_prefers_a_forwarded_client_ip_over_the_socket_peer(self):
-        # Behind a proxy the socket peer is the proxy, so keying on it would
-        # rate-limit every user behind that proxy as one.
+    def test_forwarded_headers_are_ignored_by_default(self, monkeypatch):
+        # Security: these headers are client-supplied. If they set the key, a
+        # caller could rotate X-Forwarded-For to get a fresh bucket per request
+        # and bypass rate limiting entirely.
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", False)
         key = rl._rate_limit_key(
             make_request(client_host="10.0.0.1", headers={"x-forwarded-for": "203.0.113.9"})
+        )
+        assert key == "10.0.0.1", "a spoofable header must not decide the key"
+
+    def test_spoofing_cannot_mint_new_buckets(self, monkeypatch):
+        # The bypass, stated directly: many different forged values, one key.
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", False)
+        keys = {
+            rl._rate_limit_key(
+                make_request(client_host="10.0.0.1", headers={"x-forwarded-for": forged})
+            )
+            for forged in ("1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4")
+        }
+        assert keys == {"10.0.0.1"}
+
+    def test_x_real_ip_is_also_ignored_by_default(self, monkeypatch):
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", False)
+        key = rl._rate_limit_key(
+            make_request(client_host="10.0.0.1", headers={"x-real-ip": "203.0.113.9"})
+        )
+        assert key == "10.0.0.1"
+
+    def test_forwarded_headers_are_honoured_when_explicitly_trusted(self, monkeypatch):
+        # Opt-in for deployments where a reverse proxy overwrites these headers.
+        # Without it, every caller behind that proxy shares one bucket.
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", True)
+        key = rl._rate_limit_key(
+            make_request(client_host="10.0.0.1", headers={"x-forwarded-for": "203.0.113.9"})
+        )
+        assert key == "203.0.113.9"
+
+    def test_leftmost_forwarded_entry_is_used_when_trusted(self, monkeypatch):
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", True)
+        key = rl._rate_limit_key(
+            make_request(
+                client_host="10.0.0.1",
+                headers={"x-forwarded-for": "203.0.113.9, 70.41.3.18, 150.172.238.178"},
+            )
         )
         assert key == "203.0.113.9"
 
