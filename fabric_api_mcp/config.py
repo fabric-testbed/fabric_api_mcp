@@ -38,6 +38,7 @@ class ServerConfig:
     # Rate limiting (server mode)
     rate_limit: str
     rate_limit_enabled: bool
+    rate_limit_trusted_proxies: tuple[str, ...]
 
     # Metrics
     metrics_enabled: bool
@@ -82,6 +83,25 @@ class ServerConfig:
             rate_limit_enabled=os.environ.get("RATE_LIMIT_ENABLED", "0" if is_local else "1")
                                not in ("0", "false", "False", ""),
 
+            # Peers whose X-Real-IP header is trusted to name the real client
+            # for rate limiting. Should list only the reverse proxy itself.
+            #
+            # Empty by default, i.e. trust nobody. Anything broader is a guess
+            # about the network, and a wrong guess is a rate-limit bypass: any
+            # host inside a trusted range can assert an arbitrary X-Real-IP and
+            # rotate it for a fresh bucket per request. Whole private ranges
+            # (10/8, 172.16/12, fc00::/7) are far wider than one proxy and would
+            # cover every other container, VPN client and LAN host that can
+            # reach this port.
+            #
+            # The deployment declares its own proxy: docker-compose.yml pins the
+            # nginx container to a static address and sets this to that /32.
+            rate_limit_trusted_proxies=tuple(
+                entry.strip()
+                for entry in os.environ.get("RATE_LIMIT_TRUSTED_PROXIES", "").split(",")
+                if entry.strip()
+            ),
+
             # Metrics
             metrics_enabled=os.environ.get(
                 "METRICS_ENABLED", "0" if is_local else "1"
@@ -115,8 +135,6 @@ class ServerConfig:
         _p = lambda msg: print(msg, file=sys.stderr)
         _p(f"Local mode: {self.local_mode}")
         _p(f"Transport: {self.transport}")
-        if self.local_mode:
-            _p(f"Fabric RC: {self.fabric_rc}")
         _p(f"Orchestrator HOST: {self.orchestrator_host}")
         _p(f"Credmgr HOST: {self.credmgr_host}")
         _p(f"Artifact Manager HOST: {self.am_host}")

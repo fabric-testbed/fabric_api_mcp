@@ -289,6 +289,7 @@ Server respects these (all optional unless stated):
 | `CACHE_MAX_FETCH` | `5000` | Cache fetch limit per cycle |
 | `MAX_FETCH_FOR_SORT` | `5000` | Max fetch when client asks to sort |
 | `METRICS_ENABLED` | `1` (server) / `0` (local) | Enable Prometheus metrics + `/metrics` endpoint |
+| `RATE_LIMIT_TRUSTED_PROXIES` | *empty* (trust nobody) | Comma-separated CIDRs whose `X-Real-IP` is trusted to name the real client for rate limiting. The socket peer must match one of these, which a remote caller cannot forge. **Should name only the reverse proxy** — see [Rate limiting behind a proxy](#rate-limiting-behind-a-proxy). `docker-compose.yml` sets it to the pinned nginx address. Leave empty when the server is reached directly. `X-Forwarded-For` is never used — nginx *appends* to it, so its left-most entry is caller-controlled. |
 | `FABRIC_LOCAL_MODE` | `0` | `1` to enable local/stdio mode (no Bearer token required) |
 | `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport (`stdio` or `http`) |
 
@@ -911,7 +912,7 @@ User identity uses the **FABRIC user UUID** (a GUID from the JWT `uuid` claim) a
 |--------|------|--------|-------------|
 | `mcp_requests_by_user_total` | Counter | `user_uuid`, `user_email` | Total requests per user |
 | `mcp_requests_by_user_path_total` | Counter | `user_uuid`, `user_email`, `method`, `path` | Per-user per-endpoint breakdown |
-| `mcp_rate_limit_hits_total` | Counter | `key_type` | Rate limit 429 responses |
+| `mcp_rate_limit_hits_total` | Counter | `key_type` | Rate limit 429 responses. `key_type` is `user` only for a signature-verified subject, so today it is always `ip` — see [Per-user limiting](#per-user-limiting-what-it-would-take) |
 
 #### Security metrics
 
@@ -1029,7 +1030,7 @@ Grafana is protected by [Vouch Proxy](https://github.com/vouch/vouch-proxy) usin
 - **No exposed ports**: Prometheus and Grafana have no ports exposed to the host. Grafana is served through NGINX at `/grafana/`. Prometheus is accessible only from within the Docker network.
 - **Data retention**: Prometheus is configured with 30-day retention (`--storage.tsdb.retention.time=30d`). Estimated disk usage is ~100-500 MB for 30 days depending on user/tool cardinality.
 - **NFS persistence**: Prometheus and Grafana data directories are bind-mounted to `/opt/data/production/services/api-mcp/monitoring/`. Container UIDs are configured via `.env` (copy from `env.template`). Ensure host directory ownership matches the UIDs in your `.env` file.
-- **Client IP forwarding**: NGINX forwards the real client IP via `X-Real-IP` and `X-Forwarded-For` headers. These must be set inside each `location` block (NGINX does not inherit `proxy_set_header` from the server block when a location defines its own).
+- **Client IP forwarding**: NGINX forwards the real client IP via `X-Real-IP` and `X-Forwarded-For` headers. These must be set inside each `location` block (NGINX does not inherit `proxy_set_header` from the server block when a location defines its own). The two are **not equally trustworthy**: `X-Real-IP` is set from `$remote_addr`, which *overwrites* whatever the client sent, while `X-Forwarded-For` uses `$proxy_add_x_forwarded_for`, which *appends* — so its left-most entry is whatever the caller put there. Use `X-Real-IP` for any security decision, and only from the proxy itself; see [Rate limiting behind a proxy](#rate-limiting-behind-a-proxy).
 - **Alerting**: Add Prometheus alerting rules (e.g., alert on auth failure spikes, error rate > 5%) and configure Grafana notification channels (email, Slack, PagerDuty).
 
 ---
@@ -1041,6 +1042,66 @@ Grafana is protected by [Vouch Proxy](https://github.com/vouch/vouch-proxy) usin
 * Terminate TLS at NGINX; keep the MCP service on an internal network.
 * Rotate TLS certs and restrict `client_max_body_size` if desired.
 * **Auth monitoring**: Prometheus tracks auth failures (missing/malformed/invalid/expired tokens) by client IP, and successful auth by user (UUID + email) + IP pair. Tool calls are tracked per user and FABRIC project. Use the Grafana security panels or Prometheus queries to detect brute-force attempts, overseas probing, and token reuse from unexpected locations.
+* **Rate-limit keying**: the key is derived only from inputs a caller cannot forge — see [Rate limiting behind a proxy](#rate-limiting-behind-a-proxy). In particular the JWT `sub` is used *only* from a signature-verified token, and no client-supplied header is trusted unless the socket peer is the declared proxy.
+
+### Rate limiting behind a proxy
+
+The rate-limit key **is** the bucket, so anything a caller can change is something a caller
+can use to get a fresh bucket per request — which bypasses the limit outright rather than
+merely skewing it. But the key also has to actually distinguish callers: behind a proxy,
+keying on the connection's peer address puts everyone in one bucket and turns `RATE_LIMIT`
+into a cap for the entire service.
+
+The key is therefore derived in this order:
+
+1. **The JWT `sub`, only from a signature-verified token.** A JWT payload is
+   base64 — it can be written by hand with no signing key — so an unverified `sub` is
+   attacker input, not identity. **This step never fires today** (see below); the check
+   exists so that adding verification later is safe by construction.
+2. **`X-Real-IP`, only when the socket peer matches `RATE_LIMIT_TRUSTED_PROXIES`.** The
+   peer cannot be forged by a remote client, which is what makes the header believable.
+3. **The socket peer.**
+
+So **rate limiting is per client address, not per user** — and no environment variable
+changes that. This server never verifies token signatures: it forwards them to the
+orchestrator, which authenticates them, and the claims helper it uses for logging and
+metrics performs an unverified payload decode by design.
+
+`X-Forwarded-For` is never consulted, for the reason given under
+[Production considerations](#production-considerations): nginx appends to it, so its
+left-most entry is caller-controlled even on a trusted hop.
+
+**Configure `RATE_LIMIT_TRUSTED_PROXIES` with the proxy's address and nothing more.** A
+whole private range (`10.0.0.0/8`, `172.16.0.0/12`, …) is not a safe default — it covers
+every other container, VPN client and LAN host that can reach the port, any of which could
+then assert an arbitrary `X-Real-IP`. The bundled `docker-compose.yml` pins the `frontend`
+network to `172.31.240.0/24`, gives nginx the fixed address `172.31.240.10`, and sets
+`RATE_LIMIT_TRUSTED_PROXIES=172.31.240.10/32` — exactly one host. Change the subnet and
+`ipv4_address` together if that range collides with an existing network on the host.
+
+Left empty, the server logs a warning at startup: keying falls back to the socket peer,
+which is correct when nothing fronts the service and a service-wide cap when something
+does.
+
+#### Per-user limiting: what it would take
+
+Not implemented, and not a configuration switch — there is deliberately no env var for it,
+because it would put a JWKS fetch and a signature check on the request path. Enabling it
+requires code:
+
+1. Install the `fabric_mcp_common[verify]` extra (adds `fabric_fss_utils`, hence `pyjwt`
+   and `cryptography`).
+2. Build a `CredMgrVerifier` against `FABRIC_CREDMGR_HOST`
+   (`https://<host>/credmgr/certs`).
+3. Add a middleware that verifies the bearer token and stores the verified claims on
+   `request.state.fabric_token_claims`. That attribute is the memoisation slot
+   `request_claims()` checks first, so a verified value placed there is what the
+   rate-limit key — and the access log and metrics labels — would then see.
+4. Decide the failure policy: what happens when the JWKS endpoint is unreachable, or a
+   token fails verification but the orchestrator would still have accepted it.
+
+Until then, treat `mcp_rate_limit_hits_total{key_type="user"}` as unreachable; hits are
+labelled `ip`.
 
 ---
 

@@ -1,28 +1,15 @@
 """
-Authentication module for FABRIC MCP Server.
+Authentication for the FABRIC MCP Server.
 
-Thin wrapper over the standalone ``fabric_mcp_common.auth`` package.
+Token handling itself lives in ``fabric_mcp_common.auth``; import from there
+directly for primitives such as ``decode_token_claims``, ``extract_bearer_token``,
+``read_token_from_file`` or ``redact_token``.  What remains here is the part that
+is specific to this server: a resolver bound to its configuration.
 """
 from fabric_api_mcp.auth.resolver import optional_token, require_token, resolver
-from fabric_api_mcp.auth.token import (
-    MissingTokenError,
-    TokenClaims,
-    decode_token_claims,
-    extract_bearer_token,
-    read_token_from_file,
-    redact_token,
-    validate_token_presence,
-)
 
 __all__ = [
-    "MissingTokenError",
-    "TokenClaims",
-    "decode_token_claims",
-    "extract_bearer_token",
     "optional_token",
-    "read_token_from_file",
-    "redact_token",
     "require_token",
     "resolver",
-    "validate_token_presence",
 ]
