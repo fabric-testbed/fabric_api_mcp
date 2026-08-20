@@ -223,8 +223,42 @@ class TestVerifiedSubject:
         }
         assert keys == {DIRECT_PEER}
 
+    def test_no_real_request_can_produce_verified_claims(self, trusted_proxies):
+        # Documents why step 1 of the key ordering never fires: this server has
+        # no verifier wired, and request_claims() takes none, so its claims are
+        # always verified=False. Keeps the README honest — per-user keying is
+        # not a configuration switch. If this ever fails, verification was
+        # added and the docs need updating with it.
+        from fabric_mcp_common.integrations.starlette import request_claims
+
+        trusted_proxies("172.16.0.0/12")
+        claims = request_claims(make_request(token=forge_jwt(sub="someone")))
+        assert claims.sub == "someone"
+        assert claims.verified is False
+
+    def test_verified_claims_come_only_from_the_request_state_slot(self):
+        # The documented enabling mechanism: request_claims() returns whatever
+        # TokenClaims a middleware left on request.state, so that is where a
+        # verifier would publish. Asserted so the README instruction cannot rot.
+        from fabric_mcp_common.auth import TokenClaims
+        from fabric_mcp_common.integrations.starlette import (
+            CLAIMS_STATE_ATTR,
+            request_claims,
+        )
+
+        request = make_request(token=forge_jwt(sub="unverified-value"))
+        setattr(
+            request.state,
+            CLAIMS_STATE_ATTR,
+            TokenClaims({"sub": "verified-value"}, verified=True),
+        )
+
+        claims = request_claims(request)
+        assert claims.verified is True
+        assert claims.sub == "verified-value"
+        assert rl._rate_limit_key(request) == "verified-value"
+
     def test_a_verified_subject_is_used_when_available(self, monkeypatch):
-        # Per-user keying resumes automatically once a verifier is configured.
         verified = SimpleNamespace(verified=True, sub="real-user-uuid")
         monkeypatch.setattr(rl, "request_claims", lambda request: verified)
         assert rl._rate_limit_key(make_request(client_host=DIRECT_PEER)) == "real-user-uuid"
@@ -277,6 +311,48 @@ class TestMetrics:
         rl._rate_limit_exceeded_handler(make_request(), exceeded())
         after = counter_value(mcp_rate_limit_hits_total, key_type="ip")
         assert after == before + 1
+
+    def test_a_forged_token_cannot_relabel_the_hit_as_user(
+        self, monkeypatch, trusted_proxies, counter_value
+    ):
+        # The label must describe how the request was really bucketed. Deriving
+        # it from `sub` presence let any caller flip it to "user" by sending a
+        # forged token, while the bucket was actually the address.
+        monkeypatch.setattr(rl.config, "metrics_enabled", True)
+        trusted_proxies("172.16.0.0/12")
+
+        before_user = counter_value(mcp_rate_limit_hits_total, key_type="user")
+        before_ip = counter_value(mcp_rate_limit_hits_total, key_type="ip")
+
+        rl._rate_limit_exceeded_handler(
+            make_request(client_host=DIRECT_PEER, token=forge_jwt(sub="pretend-user")),
+            exceeded(),
+        )
+
+        assert counter_value(mcp_rate_limit_hits_total, key_type="user") == before_user
+        assert counter_value(mcp_rate_limit_hits_total, key_type="ip") == before_ip + 1
+
+    def test_label_says_user_only_for_a_verified_subject(
+        self, monkeypatch, counter_value
+    ):
+        monkeypatch.setattr(rl.config, "metrics_enabled", True)
+        verified = SimpleNamespace(verified=True, sub="real-user-uuid")
+        monkeypatch.setattr(rl, "request_claims", lambda request: verified)
+
+        before = counter_value(mcp_rate_limit_hits_total, key_type="user")
+        rl._rate_limit_exceeded_handler(make_request(), exceeded())
+        assert counter_value(mcp_rate_limit_hits_total, key_type="user") == before + 1
+
+    def test_logged_key_matches_the_labelled_kind(self, monkeypatch, trusted_proxies, caplog):
+        # The warning and the metric come from one call, so they cannot diverge.
+        trusted_proxies("172.16.0.0/12")
+        monkeypatch.setattr(rl.config, "metrics_enabled", False)
+        with caplog.at_level(logging.WARNING, logger="fabric.mcp"):
+            rl._rate_limit_exceeded_handler(
+                make_request(client_host=PROXY_PEER, headers={"x-real-ip": "203.0.113.9"}),
+                exceeded(),
+            )
+        assert any("key=203.0.113.9" in r.getMessage() for r in caplog.records)
 
     def test_does_not_record_when_metrics_are_disabled(self, monkeypatch, counter_value):
         monkeypatch.setattr(rl.config, "metrics_enabled", False)

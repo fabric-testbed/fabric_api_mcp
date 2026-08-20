@@ -8,8 +8,9 @@ See :func:`_rate_limit_key` for the full ordering and why ``X-Forwarded-For`` is
 excluded.
 
 This server does not verify token signatures (it forwards them to the
-orchestrator, which authenticates them), so limiting is per client address in
-practice rather than per user.
+orchestrator, which authenticates them), so limiting is per client address
+rather than per user, and no setting changes that — see :func:`_rate_limit_key`
+for what enabling per-user keying would actually take.
 """
 from __future__ import annotations
 
@@ -82,27 +83,48 @@ def _rate_limit_key(request: Request) -> str:
     overwrites, so it reflects the real peer of the proxy.
 
     Note:
-        This server does not verify signatures — it forwards tokens to the
-        orchestrator, which authenticates them — so keying is per client address
-        in practice. Configuring a verifier (``fabric_mcp_common.auth.verify``)
-        restores per-user keying with no change here.
+        Step 1 does not fire today, and there is no setting that makes it. This
+        server never verifies signatures — it forwards tokens to the
+        orchestrator, which authenticates them — and ``request_claims()`` takes
+        no verifier, so its claims are always ``verified=False``. Keying is
+        therefore per client address. The check is kept so that adding
+        verification later is safe by construction rather than another audit.
+
+        Turning on per-user keying needs code, not configuration: install the
+        ``fabric_mcp_common[verify]`` extra, build a ``CredMgrVerifier`` against
+        ``FABRIC_CREDMGR_HOST``, and add a middleware that verifies the bearer
+        token and stores the result on
+        ``request.state.fabric_token_claims`` — the attribute
+        ``request_claims()`` reads first, so a verified value there is what this
+        function would then see. That puts a JWKS fetch and a signature check on
+        the request path, which is why it is not done implicitly.
+    """
+    return _rate_limit_identity(request)[0]
+
+
+def _rate_limit_identity(request: Request) -> tuple[str, str]:
+    """The rate-limit key and what kind of thing it is (``user`` or ``ip``).
+
+    Returned together so the ``key_type`` metric label cannot disagree with the
+    key actually used. Deriving the label separately let a forged token report
+    ``user`` for a request that was really bucketed by address.
     """
     claims = request_claims(request)
     if claims.verified and claims.sub:
-        return str(claims.sub)
+        return str(claims.sub), "user"
 
     peer = getattr(getattr(request, "client", None), "host", None)
     if _is_trusted_proxy(peer):
         asserted = request.headers.get(TRUSTED_CLIENT_IP_HEADER)
         if asserted:
-            return asserted.strip()
+            return asserted.strip(), "ip"
 
-    return get_remote_address(request)
+    return get_remote_address(request), "ip"
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """Return a JSON error response when rate limit is exceeded."""
-    key = _rate_limit_key(request)
+    key, key_type = _rate_limit_identity(request)
     log.warning(
         "Rate limit exceeded: %s (key=%s, path=%s)",
         exc.detail,
@@ -114,8 +136,8 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JS
     try:
         if config.metrics_enabled:
             from fabric_mcp_common.metrics import mcp_rate_limit_hits_total
-            # Label by what the key actually was: a `sub` claim, or the IP.
-            key_type = "user" if request_claims(request).sub else "ip"
+            # key_type comes from the same call that produced the key, so the
+            # label always describes how the request was actually bucketed.
             mcp_rate_limit_hits_total.labels(key_type=key_type).inc()
     except Exception:
         pass

@@ -912,7 +912,7 @@ User identity uses the **FABRIC user UUID** (a GUID from the JWT `uuid` claim) a
 |--------|------|--------|-------------|
 | `mcp_requests_by_user_total` | Counter | `user_uuid`, `user_email` | Total requests per user |
 | `mcp_requests_by_user_path_total` | Counter | `user_uuid`, `user_email`, `method`, `path` | Per-user per-endpoint breakdown |
-| `mcp_rate_limit_hits_total` | Counter | `key_type` | Rate limit 429 responses |
+| `mcp_rate_limit_hits_total` | Counter | `key_type` | Rate limit 429 responses. `key_type` is `user` only for a signature-verified subject, so today it is always `ip` — see [Per-user limiting](#per-user-limiting-what-it-would-take) |
 
 #### Security metrics
 
@@ -1056,14 +1056,16 @@ The key is therefore derived in this order:
 
 1. **The JWT `sub`, only from a signature-verified token.** A JWT payload is
    base64 — it can be written by hand with no signing key — so an unverified `sub` is
-   attacker input, not identity. This server does not verify signatures (it forwards
-   tokens to the orchestrator, which authenticates them), so in practice this step is
-   skipped. Configuring a verifier (`fabric_mcp_common.auth.verify`, the `[verify]`
-   extra, with the existing `FABRIC_CREDMGR_HOST`) enables per-user limiting with no code
-   change.
+   attacker input, not identity. **This step never fires today** (see below); the check
+   exists so that adding verification later is safe by construction.
 2. **`X-Real-IP`, only when the socket peer matches `RATE_LIMIT_TRUSTED_PROXIES`.** The
    peer cannot be forged by a remote client, which is what makes the header believable.
 3. **The socket peer.**
+
+So **rate limiting is per client address, not per user** — and no environment variable
+changes that. This server never verifies token signatures: it forwards them to the
+orchestrator, which authenticates them, and the claims helper it uses for logging and
+metrics performs an unverified payload decode by design.
 
 `X-Forwarded-For` is never consulted, for the reason given under
 [Production considerations](#production-considerations): nginx appends to it, so its
@@ -1080,6 +1082,26 @@ network to `172.31.240.0/24`, gives nginx the fixed address `172.31.240.10`, and
 Left empty, the server logs a warning at startup: keying falls back to the socket peer,
 which is correct when nothing fronts the service and a service-wide cap when something
 does.
+
+#### Per-user limiting: what it would take
+
+Not implemented, and not a configuration switch — there is deliberately no env var for it,
+because it would put a JWKS fetch and a signature check on the request path. Enabling it
+requires code:
+
+1. Install the `fabric_mcp_common[verify]` extra (adds `fabric_fss_utils`, hence `pyjwt`
+   and `cryptography`).
+2. Build a `CredMgrVerifier` against `FABRIC_CREDMGR_HOST`
+   (`https://<host>/credmgr/certs`).
+3. Add a middleware that verifies the bearer token and stores the verified claims on
+   `request.state.fabric_token_claims`. That attribute is the memoisation slot
+   `request_claims()` checks first, so a verified value placed there is what the
+   rate-limit key — and the access log and metrics labels — would then see.
+4. Decide the failure policy: what happens when the JWKS endpoint is unreachable, or a
+   token fails verification but the orchestrator would still have accepted it.
+
+Until then, treat `mcp_rate_limit_hits_total{key_type="user"}` as unreachable; hits are
+labelled `ip`.
 
 ---
 
