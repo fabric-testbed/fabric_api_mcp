@@ -110,6 +110,11 @@ def _rate_limit_identity(request: Request) -> tuple[str, str]:
     ``user`` for a request that was really bucketed by address.
     """
     claims = request_claims(request)
+    # NOTE: request_claims() performs an unverified decode, so `verified` is
+    # always False today and this branch never runs. If you wire a verifier —
+    # see "Per-user limiting: what it would take" in the README — this starts
+    # keying per user, and that README section plus the docstring above both
+    # need updating to match.
     if claims.verified and claims.sub:
         return str(claims.sub), "user"
 
