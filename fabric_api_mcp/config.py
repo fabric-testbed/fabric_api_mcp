@@ -115,8 +115,6 @@ class ServerConfig:
         _p = lambda msg: print(msg, file=sys.stderr)
         _p(f"Local mode: {self.local_mode}")
         _p(f"Transport: {self.transport}")
-        if self.local_mode:
-            _p(f"Fabric RC: {self.fabric_rc}")
         _p(f"Orchestrator HOST: {self.orchestrator_host}")
         _p(f"Credmgr HOST: {self.credmgr_host}")
         _p(f"Artifact Manager HOST: {self.am_host}")
