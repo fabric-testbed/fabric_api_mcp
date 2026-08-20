@@ -18,7 +18,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from fabric_mcp_common.net import DEFAULT_FORWARDED_HEADERS
-from fabric_mcp_common.integrations.starlette import rate_limit_key, request_claims
+from fabric_mcp_common.integrations.starlette import client_ip, request_claims
 
 from fabric_api_mcp.config import config
 
@@ -29,21 +29,35 @@ def _rate_limit_key(request: Request) -> str:
     """
     Extract rate limit key from the request.
 
-    Uses the JWT `sub` claim as the key for authenticated requests,
-    falling back to client IP for unauthenticated requests.
+    Only inputs the caller cannot forge may decide the key, because the key *is*
+    the bucket: anything a caller controls can be rotated to get a fresh bucket
+    per request, which bypasses the limit entirely rather than merely skewing it.
 
-    Forwarded headers are consulted for that fallback only when
-    ``RATE_LIMIT_TRUST_PROXY_HEADERS`` is set. They are client-supplied, so
-    trusting them unconditionally would let a caller rotate ``X-Forwarded-For``
-    to mint a fresh bucket per request and bypass the limit outright.
-    Authenticated callers are unaffected either way: they key on ``sub``.
+    So the order is:
+
+    1. The JWT ``sub``, but **only from a signature-verified token**. An
+       unverified payload decode is attacker-controlled — a JWT payload can be
+       base64-encoded by hand with no signing key — so ``sub`` is trusted here
+       only when :attr:`TokenClaims.verified` says a signature was checked.
+    2. The client IP, honouring proxy headers only when
+       ``RATE_LIMIT_TRUST_PROXY_HEADERS`` says a trusted proxy overwrites them.
+    3. SlowAPI's own remote-address resolution, as a last resort.
+
+    Note:
+        This server does not currently verify signatures — it forwards tokens to
+        the orchestrator, which authenticates them — so in practice keying falls
+        through to the client IP. Configuring a verifier (see
+        ``fabric_mcp_common.auth.verify``) restores per-user limiting
+        automatically, with no change here.
     """
-    # Keys on the `sub` claim, then the client IP, then SlowAPI's own
-    # remote-address resolution when nothing else identifies the caller.
+    claims = request_claims(request)
+    if claims.verified and claims.sub:
+        return str(claims.sub)
+
     forwarded_headers = (
         DEFAULT_FORWARDED_HEADERS if config.rate_limit_trust_proxy_headers else ()
     )
-    return rate_limit_key(
+    return client_ip(
         request,
         forwarded_headers=forwarded_headers,
         default=get_remote_address(request),

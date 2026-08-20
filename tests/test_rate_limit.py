@@ -1,6 +1,7 @@
 """Rate limiting: the key function, the 429 contract, and metric labelling."""
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from types import SimpleNamespace
@@ -11,12 +12,28 @@ from fabric_mcp_common.metrics import mcp_rate_limit_hits_total
 from fabric_api_mcp.middleware import rate_limit as rl
 
 
-def make_request(*, client_host="203.0.113.7", headers=None, path="/mcp"):
+def forge_jwt(**claims) -> str:
+    """Build a JWT with arbitrary claims and a junk signature.
+
+    No signing key is involved — which is the point. Anything that trusts an
+    unverified payload decode is trusting this.
+    """
+    def b64(data: dict) -> str:
+        raw = json.dumps(data).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return f"{b64({'alg': 'RS256', 'typ': 'JWT'})}.{b64(claims)}.not-a-real-signature"
+
+
+def make_request(*, client_host="203.0.113.7", headers=None, path="/mcp", token=None):
     """Build a minimal Starlette Request suitable for the key/handler code."""
     from starlette.requests import Request
 
+    headers = dict(headers or {})
+    if token is not None:
+        headers["authorization"] = f"Bearer {token}"
     raw_headers = [
-        (k.lower().encode(), v.encode()) for k, v in (headers or {}).items()
+        (k.lower().encode(), v.encode()) for k, v in headers.items()
     ]
     scope = {
         "type": "http",
@@ -82,6 +99,49 @@ class TestRateLimitKey:
         )
         assert key == "203.0.113.9"
 
+    def test_forged_jwt_subject_cannot_decide_the_key(self, monkeypatch):
+        # A JWT payload can be base64-encoded by hand with no signing key, so an
+        # unverified `sub` is attacker-controlled. It must not set the bucket.
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", False)
+        key = rl._rate_limit_key(
+            make_request(client_host="10.0.0.1", token=forge_jwt(sub="victim-or-whoever"))
+        )
+        assert key == "10.0.0.1", "an unverified JWT sub must not decide the key"
+
+    def test_rotating_forged_subjects_cannot_mint_new_buckets(self, monkeypatch):
+        # The bypass, stated as the attack: many forged identities, one bucket.
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", False)
+        keys = {
+            rl._rate_limit_key(
+                make_request(client_host="10.0.0.1", token=forge_jwt(sub=f"attacker-{i}"))
+            )
+            for i in range(6)
+        }
+        assert keys == {"10.0.0.1"}
+
+    def test_a_verified_subject_is_used_when_available(self, monkeypatch):
+        # Signature-verified claims are trustworthy, so per-user limiting
+        # resumes automatically once a verifier is configured.
+        verified = SimpleNamespace(verified=True, sub="real-user-uuid")
+        monkeypatch.setattr(rl, "request_claims", lambda request: verified)
+        assert rl._rate_limit_key(make_request(client_host="10.0.0.1")) == "real-user-uuid"
+
+    def test_a_verified_subject_beats_a_trusted_proxy_header(self, monkeypatch):
+        # Identity is more specific than address when it is actually proven.
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", True)
+        verified = SimpleNamespace(verified=True, sub="real-user-uuid")
+        monkeypatch.setattr(rl, "request_claims", lambda request: verified)
+        key = rl._rate_limit_key(
+            make_request(client_host="10.0.0.1", headers={"x-forwarded-for": "203.0.113.9"})
+        )
+        assert key == "real-user-uuid"
+
+    def test_verified_claims_without_a_subject_fall_back_to_ip(self, monkeypatch):
+        monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", False)
+        verified_no_sub = SimpleNamespace(verified=True, sub=None)
+        monkeypatch.setattr(rl, "request_claims", lambda request: verified_no_sub)
+        assert rl._rate_limit_key(make_request(client_host="10.0.0.1")) == "10.0.0.1"
+
     def test_leftmost_forwarded_entry_is_used_when_trusted(self, monkeypatch):
         monkeypatch.setattr(rl.config, "rate_limit_trust_proxy_headers", True)
         key = rl._rate_limit_key(
@@ -132,11 +192,18 @@ class TestMetrics:
 
     def test_a_metrics_failure_never_breaks_the_response(self, monkeypatch):
         # The handler swallows metric errors on purpose: a broken counter must
-        # not turn a 429 into a 500.
+        # not turn a 429 into a 500. Patch the counter itself rather than
+        # request_claims — the latter is also used for key derivation, outside
+        # the metrics try/except, so breaking it would test the wrong thing.
+        import fabric_mcp_common.metrics as metrics_mod
+
+        class Exploding:
+            def labels(self, **_kwargs):
+                raise RuntimeError("counter is broken")
+
         monkeypatch.setattr(rl.config, "metrics_enabled", True)
-        monkeypatch.setattr(
-            rl, "request_claims", lambda request: (_ for _ in ()).throw(RuntimeError("boom"))
-        )
+        monkeypatch.setattr(metrics_mod, "mcp_rate_limit_hits_total", Exploding())
+
         response = rl._rate_limit_exceeded_handler(make_request(), exceeded())
         assert response.status_code == 429
 
