@@ -127,30 +127,39 @@ class TestNoVerifierIsWired:
         }
     )
 
-    #: Names specific enough to mean token verification wherever they appear.
-    #: Deliberately excludes bare ``verify``: in Python that word is
-    #: overwhelmingly TLS vocabulary (``requests.get(url, verify=ca_bundle)``,
-    #: ``session.verify = path``), and this package talks to FABRIC over HTTPS.
-    #: Matching it broadly would fail CI on unrelated work — which is worse than
-    #: the gap it closes, because a false alarm here blocks a change that has
-    #: nothing to do with rate limiting.
-    ENABLING_NAMES = frozenset({"verifier", "verified"})
+    #: Names specific enough to mean *token* verification wherever they appear.
+    #:
+    #: Bare ``verify`` and bare ``verified`` are both excluded, because both are
+    #: ambiguous in this domain and a false alarm blocks an unrelated change:
+    #: ``verify`` is TLS vocabulary (``requests.get(url, verify=ca_bundle)``,
+    #: ``session.verify = path``), and ``verified`` is account/email vocabulary
+    #: (``user.verified = True``, ``UserRecord(verified=True)``) in a server that
+    #: serves user and project records.
+    #:
+    #: ``_verified`` is included: it is TokenClaims' private slot, and assigning
+    #: it is the only way to flip an existing instance — ``claims.verified`` is a
+    #: read-only property, so ``claims.verified = True`` raises AttributeError
+    #: and is not a route at all.
+    ENABLING_NAMES = frozenset({"verifier", "_verified"})
 
-    #: ``verify`` is only meaningful in a call to one of these, where it is the
-    #: documented flag rather than a TLS argument. Note that ``verify=True``
-    #: without a verifier raises ValueError in TokenResolver, so a verifier is
-    #: always present when verification is genuinely switched on — which is why
-    #: excluding bare ``verify`` elsewhere loses nothing real.
-    RESOLVER_FACTORIES = frozenset({"build_resolver", "TokenResolver"})
+    #: Ambiguous keywords, each meaningful only in a call to one of these. Both
+    #: are checked with the call target, so TLS and account-verification uses
+    #: elsewhere are ignored.
+    KWARG_SCOPES = {
+        # verify=True without a verifier raises ValueError in TokenResolver, and
+        # resolve() verifies only when self.verifier is not None — so a verifier
+        # is always present when verification is genuinely on.
+        "verify": frozenset({"build_resolver", "TokenResolver"}),
+        "verified": frozenset({"TokenClaims"}),
+    }
 
     #: The request.state slot request_claims() consults first.
     CLAIMS_SLOT = "fabric_token_claims"
 
     #: Literals worth matching, for dynamic writes like
-    #: ``setattr(resolver, "verifier", V())``. ``"verified"`` is left out: it is
-    #: plausible payload vocabulary (``{"status": "verified"}``) and the
-    #: attribute and keyword rules already cover the real routes.
-    ENABLING_LITERALS = frozenset({"verifier"})
+    #: ``setattr(resolver, "verifier", V())`` or
+    #: ``setattr(claims, "_verified", True)``.
+    ENABLING_LITERALS = frozenset({"verifier", "_verified"})
 
     @classmethod
     def _verification_findings(cls, source: str) -> set[str]:
@@ -175,19 +184,19 @@ class TestNoVerifierIsWired:
             """False for an explicit opt-out (verifier=None, verified=False)."""
             return not (isinstance(value, ast.Constant) and value.value in (False, None))
 
-        # `verify=` counts only inside a resolver factory call, where it is the
-        # documented flag rather than a TLS argument. Collected first because the
-        # keyword nodes are reached separately by the walk below.
-        resolver_verify_kwargs: set[int] = set()
+        # Ambiguous keywords count only inside the calls that give them their
+        # token meaning. Collected first because the walk below reaches keyword
+        # nodes without their enclosing Call.
+        scoped_kwargs: set[int] = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            name = getattr(func, "id", None) or getattr(func, "attr", None)
-            if name in cls.RESOLVER_FACTORIES:
-                for kw in node.keywords:
-                    if kw.arg == "verify" and enabled(kw.value):
-                        resolver_verify_kwargs.add(id(kw))
+            target = getattr(func, "id", None) or getattr(func, "attr", None)
+            for kw in node.keywords:
+                allowed = cls.KWARG_SCOPES.get(kw.arg)
+                if allowed and target in allowed and enabled(kw.value):
+                    scoped_kwargs.add(id(kw))
 
         findings: set[str] = set()
         for node in ast.walk(tree):
@@ -204,10 +213,10 @@ class TestNoVerifierIsWired:
                 #    not a string.
                 if node.attr in (cls.CLAIMS_SLOT, *cls.VERIFIER_NAMES):
                     findings.add(node.attr)
-                # 3. Post-construction mutation of .verifier / .verified. Store
+                # 3. Post-construction mutation of .verifier / ._verified. Store
                 #    context only, so the `claims.verified` read in
-                #    _rate_limit_key does not fire. `.verify` is excluded: it is
-                #    the TLS spelling (`session.verify = ca_bundle`).
+                #    _rate_limit_key does not fire. `.verify` and `.verified` are
+                #    excluded as ambiguous — see ENABLING_NAMES.
                 elif node.attr in cls.ENABLING_NAMES and isinstance(node.ctx, ast.Store):
                     findings.add(f".{node.attr}=")
             # 4. The slot, or "verifier", as a literal outside a docstring. This
@@ -220,10 +229,10 @@ class TestNoVerifierIsWired:
                 and id(node) not in docstrings
             ):
                 findings.add(node.value)
-            # 5. Keywords: verifier= / verified= anywhere, and verify= only in a
-            #    resolver factory call.
+            # 5. Keywords: verifier= anywhere; verify= and verified= only in the
+            #    calls that give them their token meaning.
             elif isinstance(node, ast.keyword) and (
-                node.arg in cls.ENABLING_NAMES or id(node) in resolver_verify_kwargs
+                node.arg in cls.ENABLING_NAMES or id(node) in scoped_kwargs
             ):
                 if enabled(node.value):
                     findings.add(f"{node.arg}=")
@@ -295,15 +304,40 @@ class TestNoVerifierIsWired:
             pytest.param(
                 'object.__setattr__(resolver, "verifier", V())\n', id="object-setattr"
             ),
-            pytest.param("claims.verified = True\n", id="verified-attribute"),
+            # The only way to flip an existing TokenClaims: `verified` is a
+            # read-only property, so `claims.verified = True` raises
+            # AttributeError and is not a route at all.
+            pytest.param("claims._verified = True\n", id="private-slot"),
+            pytest.param(
+                'setattr(claims, "_verified", True)\n', id="private-slot-setattr"
+            ),
         ],
     )
     def test_canary_catches_post_construction_mutation(self, wired):
         assert self._verification_findings(wired), f"missed: {wired.strip()}"
 
-    def test_verify_flag_counts_inside_a_resolver_factory(self):
-        wired = "r = build_resolver(local_mode=False, verifier=V(), verify=True)\n"
-        assert self._verification_findings(wired)
+    @pytest.mark.parametrize(
+        "wired",
+        [
+            pytest.param(
+                "r = build_resolver(local_mode=False, verifier=V(), verify=True)\n",
+                id="verify-in-build_resolver",
+            ),
+            pytest.param(
+                "c = TokenClaims(payload, verified=True)\n", id="verified-in-TokenClaims"
+            ),
+        ],
+    )
+    def test_ambiguous_keywords_count_in_their_own_calls(self, wired):
+        assert self._verification_findings(wired), f"missed: {wired.strip()}"
+
+    def test_claims_verified_is_not_assignable(self):
+        # Justifies excluding `.verified=`: matching it would guard a route that
+        # cannot exist, while blocking legitimate `user.verified = True`.
+        from fabric_mcp_common.auth import TokenClaims
+
+        with pytest.raises(AttributeError):
+            TokenClaims({"sub": "x"}).verified = True
 
     # A false alarm here blocks unrelated work, so these matter as much as the
     # catches. `verify` in Python is overwhelmingly TLS vocabulary, and this
@@ -325,6 +359,15 @@ class TestNoVerifierIsWired:
             pytest.param(
                 "r = build_resolver(verifier=None, verify=False)\n", id="explicit-opt-out"
             ),
+            # `verified` is account/email vocabulary too, in a server that serves
+            # user and project records.
+            pytest.param("user.verified = True\n", id="user-verified-attribute"),
+            pytest.param("u = UserRecord(verified=True)\n", id="user-record-kwarg"),
+            pytest.param(
+                'return {"email": e, "verified": True}\n', id="verified-response-field"
+            ),
+            pytest.param("email_verified = claims.get('email_verified')\n", id="oidc-claim"),
+            pytest.param('setattr(user, "verified", True)\n', id="user-setattr"),
         ],
     )
     def test_canary_does_not_fire_on_unrelated_code(self, benign):
