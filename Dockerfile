@@ -3,11 +3,9 @@ FROM python:${PYTHON_VERSION}
 
 LABEL maintainer="Komal Thareja <komal.thareja@gmail.com>"
 
-# System deps (keep minimal; gcc/python3-dev needed to compile recordclass).
-# git is required to resolve the `fabric_mcp_common @ git+https://...` requirement
-# in requirements.txt; drop it once that becomes a plain PyPI pin.
+# System deps (keep minimal; gcc/python3-dev needed to compile recordclass)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    vim-tiny cron iputils-ping ca-certificates curl git \
+    vim-tiny cron iputils-ping ca-certificates curl \
     gcc python3-dev \
  && rm -rf /var/lib/apt/lists/*
 

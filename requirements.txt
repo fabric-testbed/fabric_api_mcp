@@ -9,9 +9,7 @@ prometheus-client
 uv
 
 # Shared FABRIC MCP plumbing: token auth, Prometheus instrumentation, logging.
-# Installed from git until fabric_mcp_common is published to PyPI, at which point
-# this becomes a plain `fabric_mcp_common>=0.1.0` pin matching pyproject.toml.
-fabric_mcp_common[metrics] @ git+https://github.com/fabric-testbed/fabric-mcp-common.git@main
+fabric_mcp_common[metrics]>=0.1.0
 
 # Testing dependencies
 pytest
