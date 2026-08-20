@@ -49,7 +49,7 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JS
     # Record Prometheus rate limit metric (server mode only)
     try:
         if config.metrics_enabled:
-            from fabric_api_mcp.metrics import mcp_rate_limit_hits_total
+            from fabric_mcp_common.metrics import mcp_rate_limit_hits_total
             # Label by what the key actually was: a `sub` claim, or the IP.
             key_type = "user" if request_claims(request).sub else "ip"
             mcp_rate_limit_hits_total.labels(key_type=key_type).inc()

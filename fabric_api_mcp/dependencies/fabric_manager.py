@@ -60,7 +60,7 @@ class FabricManagerFactory:
         if not token_location:
             raise ValueError("FABRIC_TOKEN_LOCATION environment variable is not set for local mode")
 
-        from fabric_api_mcp.auth.token import read_token_from_file
+        from fabric_mcp_common.auth import read_token_from_file
         token = read_token_from_file()
 
         fm = FabricManagerV2(

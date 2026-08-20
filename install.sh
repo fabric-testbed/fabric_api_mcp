@@ -22,13 +22,55 @@ CONFIGURED_PROJECT_ID=""
 
 GITHUB_RAW="https://raw.githubusercontent.com/fabric-testbed/fabric_api_mcp/main"
 
-# ----------------------- Helpers -----------------------
+# ----------------------- Shared bootstrap helpers -----------------------
+#
+# Logging, OS and package-manager detection, package installation, Python
+# discovery and venv creation are identical across FABRIC MCP servers, so they
+# live in fabric_mcp_common instead of being copied into each install.sh.
+#
+# This runs before any virtualenv exists, so the library cannot be imported from
+# the Python package — it is fetched over HTTPS. Point
+# FABRIC_MCP_COMMON_INSTALL_SH at a local file to use a checkout instead (offline
+# installs, or testing an unreleased change).
 
-info()  { printf '\033[1;34m[info]\033[0m  %s\n' "$*"; }
-ok()    { printf '\033[1;32m[ok]\033[0m    %s\n' "$*"; }
-warn()  { printf '\033[1;33m[warn]\033[0m  %s\n' "$*"; }
-err()   { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; }
-die()   { err "$@"; exit 1; }
+FMC_RAW="${FABRIC_MCP_COMMON_RAW:-https://raw.githubusercontent.com/fabric-testbed/fabric-mcp-common/main}"
+FMC_INSTALL_SH="${FABRIC_MCP_COMMON_INSTALL_SH:-}"
+FMC_TMP=""
+
+# Cannot use err()/die() yet — they are defined by the file being fetched.
+_bootstrap_die() { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+if [[ -z "$FMC_INSTALL_SH" ]]; then
+  FMC_TMP="$(mktemp -t fabric-mcp-install-common.XXXXXX)" \
+    || _bootstrap_die "Could not create a temporary file for installer helpers."
+  FMC_URL="$FMC_RAW/fabric_mcp_common/templates/install-common.sh"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$FMC_URL" -o "$FMC_TMP" \
+      || _bootstrap_die "Could not download installer helpers from $FMC_URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$FMC_TMP" "$FMC_URL" \
+      || _bootstrap_die "Could not download installer helpers from $FMC_URL"
+  else
+    _bootstrap_die "Neither curl nor wget is available; install one and re-run."
+  fi
+  FMC_INSTALL_SH="$FMC_TMP"
+fi
+
+[[ -s "$FMC_INSTALL_SH" ]] \
+  || _bootstrap_die "Installer helpers missing or empty: $FMC_INSTALL_SH"
+
+# shellcheck source=/dev/null
+source "$FMC_INSTALL_SH" \
+  || _bootstrap_die "Could not load installer helpers from $FMC_INSTALL_SH"
+[[ -n "$FMC_TMP" ]] && rm -f "$FMC_TMP"
+
+# Sanity-check the contract, so a drifted upstream fails here with a clear
+# message rather than as "command not found" halfway through an install.
+for _fn in info ok warn err die detect_os ensure_command ensure_python ensure_venv; do
+  declare -F "$_fn" >/dev/null \
+    || _bootstrap_die "Installer helpers did not define '$_fn' — version mismatch?"
+done
+unset _fn
 
 usage() {
   cat <<'EOF'
@@ -83,111 +125,6 @@ fi
 VENV_DIR="${VENV_DIR:-$INSTALL_DIR/venv}"
 CONFIG_DIR="${CONFIG_DIR:-$WORK_DIR/fabric_config}"
 
-# ----------------------- OS detection -----------------------
-
-detect_os() {
-  case "$(uname -s)" in
-    Darwin*) OS="macos" ;;
-    Linux*)  OS="linux" ;;
-    *)       die "Unsupported OS: $(uname -s)" ;;
-  esac
-
-  if [[ "$OS" == "linux" ]]; then
-    if command -v apt-get >/dev/null 2>&1; then
-      PKG_MGR="apt"
-    elif command -v yum >/dev/null 2>&1; then
-      PKG_MGR="yum"
-    elif command -v dnf >/dev/null 2>&1; then
-      PKG_MGR="dnf"
-    else
-      PKG_MGR="unknown"
-    fi
-  else
-    if command -v brew >/dev/null 2>&1; then
-      PKG_MGR="brew"
-    else
-      PKG_MGR="unknown"
-    fi
-  fi
-
-  info "Detected OS: $OS, package manager: $PKG_MGR"
-}
-
-# ----------------------- Package install helpers -----------------------
-
-pkg_install() {
-  local pkg="$1"
-  case "$PKG_MGR" in
-    brew) brew install "$pkg" ;;
-    apt)  sudo apt-get update -qq && sudo apt-get install -y -qq "$pkg" ;;
-    yum)  sudo yum install -y "$pkg" ;;
-    dnf)  sudo dnf install -y "$pkg" ;;
-    *)    die "Cannot install $pkg: no supported package manager found. Install it manually." ;;
-  esac
-}
-
-ensure_command() {
-  local cmd="$1"
-  local pkg="${2:-$1}"
-  if command -v "$cmd" >/dev/null 2>&1; then
-    ok "$cmd is already installed"
-  else
-    info "Installing $pkg..."
-    pkg_install "$pkg"
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      die "Failed to install $cmd. Please install it manually and re-run."
-    fi
-    ok "$cmd installed"
-  fi
-}
-
-# ----------------------- Python helpers -----------------------
-
-ensure_python() {
-  # Check for python3.11+
-  local py=""
-  for candidate in python3.14 python3.13 python3.12 python3.11 python3; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      local ver
-      ver="$("$candidate" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)"
-      if [[ "$ver" -ge 11 ]]; then
-        py="$candidate"
-        break
-      fi
-    fi
-  done
-
-  if [[ -n "$py" ]]; then
-    ok "Python 3.11+ found: $py ($($py --version))"
-    PYTHON="$py"
-    return
-  fi
-
-  info "Python 3.11+ not found, installing..."
-  case "$PKG_MGR" in
-    brew) brew install python@3.13 ;;
-    apt)  sudo apt-get update -qq && sudo apt-get install -y -qq python3 python3-venv python3-pip ;;
-    yum)  sudo yum install -y python3 python3-pip ;;
-    dnf)  sudo dnf install -y python3 python3-pip ;;
-    *)    die "Cannot install Python. Install Python 3.11+ manually and re-run." ;;
-  esac
-
-  # Re-detect
-  for candidate in python3.14 python3.13 python3.12 python3.11 python3; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      local ver
-      ver="$("$candidate" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)"
-      if [[ "$ver" -ge 11 ]]; then
-        PYTHON="$candidate"
-        ok "Python installed: $PYTHON ($($PYTHON --version))"
-        return
-      fi
-    fi
-  done
-
-  die "Could not find Python 3.11+ after installation. Install it manually and re-run."
-}
-
 # ----------------------- Common setup -----------------------
 
 setup_dirs() {
@@ -200,24 +137,15 @@ setup_dirs() {
 setup_venv() {
   info "=== Setting up Python venv + fabric_api_mcp ==="
 
-  # 1. Ensure Python 3.11+
+  # 1. Ensure Python 3.11+, then create the venv and upgrade pip inside it
   ensure_python
+  ensure_venv "$VENV_DIR"
 
-  # 2. Create Python venv
-  if [[ -d "$VENV_DIR" ]]; then
-    ok "Python venv already exists: $VENV_DIR"
-  else
-    info "Creating Python venv at $VENV_DIR..."
-    "$PYTHON" -m venv "$VENV_DIR"
-    ok "Venv created"
-  fi
-
-  # 3. Install fabric_api_mcp into venv (includes fabric-cli as dependency)
+  # 2. Install fabric_api_mcp into venv (includes fabric-cli as dependency)
   info "Installing fabric_api_mcp into venv..."
   # The install below is pip-from-git, so git must be present. Dependencies
   # (including fabric_mcp_common) resolve from PyPI via pyproject.toml.
   ensure_command git
-  "$VENV_DIR/bin/pip" install --quiet --upgrade pip
   "$VENV_DIR/bin/pip" install --quiet "git+https://github.com/fabric-testbed/fabric_api_mcp.git"
   ok "fabric_api_mcp installed (includes fabric-cli)"
 }
