@@ -45,21 +45,33 @@ class TestDefaults:
         assert cfg.rate_limit == "60/minute"
 
 
-class TestProxyHeaderTrust:
-    def test_defaults_off_so_the_limit_cannot_be_spoofed_away(self, clean_env):
-        # X-Real-IP / X-Forwarded-For are client-supplied. Trusting them by
-        # default would let a caller rotate the header for a fresh bucket per
-        # request, making the rate limit no protection at all.
-        assert ServerConfig.from_env().rate_limit_trust_proxy_headers is False
+class TestTrustedProxies:
+    def test_defaults_cover_loopback_and_private_ranges(self, clean_env):
+        # The deployed shape is nginx proxying over a Docker network, so the
+        # peer is private. A request off the internet never is.
+        proxies = ServerConfig.from_env().rate_limit_trusted_proxies
+        assert "127.0.0.0/8" in proxies
+        assert "172.16.0.0/12" in proxies
+        assert "::1/128" in proxies
 
-    def test_can_be_enabled_behind_a_trusted_proxy(self, clean_env):
-        clean_env.setenv("RATE_LIMIT_TRUST_PROXY_HEADERS", "1")
-        assert ServerConfig.from_env().rate_limit_trust_proxy_headers is True
+    def test_is_a_tuple_so_it_cannot_be_mutated_in_place(self, clean_env):
+        assert isinstance(ServerConfig.from_env().rate_limit_trusted_proxies, tuple)
 
-    @pytest.mark.parametrize("value", FALSEY)
-    def test_falsey_values_keep_it_off(self, clean_env, value):
-        clean_env.setenv("RATE_LIMIT_TRUST_PROXY_HEADERS", value)
-        assert ServerConfig.from_env().rate_limit_trust_proxy_headers is False
+    def test_can_be_narrowed_to_a_specific_proxy(self, clean_env):
+        clean_env.setenv("RATE_LIMIT_TRUSTED_PROXIES", "172.18.0.5/32")
+        assert ServerConfig.from_env().rate_limit_trusted_proxies == ("172.18.0.5/32",)
+
+    def test_empty_value_trusts_no_proxy(self, clean_env):
+        # Correct when the server is exposed directly, with nothing in front.
+        clean_env.setenv("RATE_LIMIT_TRUSTED_PROXIES", "")
+        assert ServerConfig.from_env().rate_limit_trusted_proxies == ()
+
+    def test_whitespace_and_blank_entries_are_dropped(self, clean_env):
+        clean_env.setenv("RATE_LIMIT_TRUSTED_PROXIES", " 10.0.0.0/8 , ,192.168.0.0/16, ")
+        assert ServerConfig.from_env().rate_limit_trusted_proxies == (
+            "10.0.0.0/8",
+            "192.168.0.0/16",
+        )
 
 
 class TestLocalModeFlipsDefaults:

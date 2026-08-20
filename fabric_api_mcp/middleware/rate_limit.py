@@ -7,7 +7,9 @@ unauthenticated requests.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
+from typing import Optional
 
 from fastapi import FastAPI
 from slowapi import Limiter
@@ -17,12 +19,33 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from fabric_mcp_common.net import DEFAULT_FORWARDED_HEADERS
-from fabric_mcp_common.integrations.starlette import client_ip, request_claims
+from fabric_mcp_common.integrations.starlette import request_claims
 
 from fabric_api_mcp.config import config
 
 log = logging.getLogger("fabric.mcp")
+
+#: Header a trusted proxy uses to assert the real client address. nginx sets
+#: this from ``$remote_addr``, overwriting anything the client sent — unlike
+#: ``X-Forwarded-For``, which it appends to.
+TRUSTED_CLIENT_IP_HEADER = "x-real-ip"
+
+
+def _is_trusted_proxy(host: Optional[str]) -> bool:
+    """Whether *host* is one of the peers allowed to assert the client address."""
+    if not host:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    for entry in config.rate_limit_trusted_proxies:
+        try:
+            if address in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            log.warning("Ignoring malformed RATE_LIMIT_TRUSTED_PROXIES entry: %s", entry)
+    return False
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -30,38 +53,45 @@ def _rate_limit_key(request: Request) -> str:
     Extract rate limit key from the request.
 
     Only inputs the caller cannot forge may decide the key, because the key *is*
-    the bucket: anything a caller controls can be rotated to get a fresh bucket
-    per request, which bypasses the limit entirely rather than merely skewing it.
+    the bucket: anything a caller controls can be rotated for a fresh bucket per
+    request, which bypasses the limit outright rather than merely skewing it.
+    But the key must also actually distinguish callers — behind a proxy, keying
+    on the socket peer puts everyone in one bucket and caps the whole service.
 
-    So the order is:
+    Order:
 
     1. The JWT ``sub``, but **only from a signature-verified token**. An
        unverified payload decode is attacker-controlled — a JWT payload can be
-       base64-encoded by hand with no signing key — so ``sub`` is trusted here
-       only when :attr:`TokenClaims.verified` says a signature was checked.
-    2. The client IP, honouring proxy headers only when
-       ``RATE_LIMIT_TRUST_PROXY_HEADERS`` says a trusted proxy overwrites them.
-    3. SlowAPI's own remote-address resolution, as a last resort.
+       base64-encoded by hand with no signing key — so ``sub`` is trusted only
+       when :attr:`TokenClaims.verified` says a signature was checked.
+    2. ``X-Real-IP``, but **only when the socket peer is a trusted proxy**
+       (``RATE_LIMIT_TRUSTED_PROXIES``). The peer cannot be forged by a remote
+       client, so it is what makes the header believable.
+    3. The socket peer itself, via SlowAPI's remote-address resolution.
+
+    ``X-Forwarded-For`` is deliberately *not* consulted. The nginx in front of
+    this service sets it with ``$proxy_add_x_forwarded_for``, which **appends**
+    to whatever the client sent, so its left-most entry is caller-controlled
+    even on a trusted hop. ``X-Real-IP`` is set to ``$remote_addr``, which
+    overwrites, so it reflects the real peer of the proxy.
 
     Note:
-        This server does not currently verify signatures — it forwards tokens to
-        the orchestrator, which authenticates them — so in practice keying falls
-        through to the client IP. Configuring a verifier (see
-        ``fabric_mcp_common.auth.verify``) restores per-user limiting
-        automatically, with no change here.
+        This server does not verify signatures — it forwards tokens to the
+        orchestrator, which authenticates them — so keying is per client address
+        in practice. Configuring a verifier (``fabric_mcp_common.auth.verify``)
+        restores per-user keying with no change here.
     """
     claims = request_claims(request)
     if claims.verified and claims.sub:
         return str(claims.sub)
 
-    forwarded_headers = (
-        DEFAULT_FORWARDED_HEADERS if config.rate_limit_trust_proxy_headers else ()
-    )
-    return client_ip(
-        request,
-        forwarded_headers=forwarded_headers,
-        default=get_remote_address(request),
-    )
+    peer = getattr(getattr(request, "client", None), "host", None)
+    if _is_trusted_proxy(peer):
+        asserted = request.headers.get(TRUSTED_CLIENT_IP_HEADER)
+        if asserted:
+            return asserted.strip()
+
+    return get_remote_address(request)
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:

@@ -289,7 +289,7 @@ Server respects these (all optional unless stated):
 | `CACHE_MAX_FETCH` | `5000` | Cache fetch limit per cycle |
 | `MAX_FETCH_FOR_SORT` | `5000` | Max fetch when client asks to sort |
 | `METRICS_ENABLED` | `1` (server) / `0` (local) | Enable Prometheus metrics + `/metrics` endpoint |
-| `RATE_LIMIT_TRUST_PROXY_HEADERS` | `0` | `1` to let `X-Real-IP`/`X-Forwarded-For` supply the rate-limit key. Set **only** behind a reverse proxy that overwrites them — these headers are client-supplied, so trusting them otherwise lets a caller rotate the value to get a fresh bucket per request and bypass the limit. Authenticated callers key on the JWT `sub` either way. |
+| `RATE_LIMIT_TRUSTED_PROXIES` | loopback + private ranges | Comma-separated CIDRs whose `X-Real-IP` is trusted to name the real client for rate limiting. The socket peer must match one of these, which a remote caller cannot forge. Defaults cover loopback and the private ranges Docker networks use, matching the bundled `nginx` + `docker-compose` deployment. Set to an empty value if the server is exposed directly with no proxy in front. `X-Forwarded-For` is never used — nginx *appends* to it, so its left-most entry is caller-controlled. |
 | `FABRIC_LOCAL_MODE` | `0` | `1` to enable local/stdio mode (no Bearer token required) |
 | `FABRIC_MCP_TRANSPORT` | `stdio` (local) / `http` (server) | Override transport (`stdio` or `http`) |
 

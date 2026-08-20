@@ -38,7 +38,7 @@ class ServerConfig:
     # Rate limiting (server mode)
     rate_limit: str
     rate_limit_enabled: bool
-    rate_limit_trust_proxy_headers: bool
+    rate_limit_trusted_proxies: tuple[str, ...]
 
     # Metrics
     metrics_enabled: bool
@@ -83,14 +83,28 @@ class ServerConfig:
             rate_limit_enabled=os.environ.get("RATE_LIMIT_ENABLED", "0" if is_local else "1")
                                not in ("0", "false", "False", ""),
 
-            # Whether X-Real-IP / X-Forwarded-For may supply the rate-limit key.
-            # Defaults OFF: those headers are client-supplied, so trusting them
-            # lets a caller mint a fresh bucket per spoofed value and bypass the
-            # limit entirely. Enable only when a trusted reverse proxy is
-            # guaranteed to overwrite them.
-            rate_limit_trust_proxy_headers=os.environ.get(
-                "RATE_LIMIT_TRUST_PROXY_HEADERS", "0"
-            ) not in ("0", "false", "False", ""),
+            # Peers whose X-Real-IP header is trusted for the rate-limit key.
+            #
+            # Deployed behind nginx (see nginx/default.conf, docker-compose.yml),
+            # the socket peer is always the proxy container, so keying on it
+            # alone would put every caller in one bucket and cap the whole
+            # service at `rate_limit`. Keying on a header instead is only safe
+            # when the request demonstrably came from the proxy — which the
+            # socket peer proves, and a client cannot forge.
+            #
+            # Defaults to loopback plus the private ranges Docker networks use,
+            # since a request arriving straight off the internet never has a
+            # private peer. Set to an empty value to trust no peer (correct if
+            # the server is exposed directly), or to specific CIDRs when the
+            # proxy sits at a known public address.
+            rate_limit_trusted_proxies=tuple(
+                entry.strip()
+                for entry in os.environ.get(
+                    "RATE_LIMIT_TRUSTED_PROXIES",
+                    "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7",
+                ).split(",")
+                if entry.strip()
+            ),
 
             # Metrics
             metrics_enabled=os.environ.get(
