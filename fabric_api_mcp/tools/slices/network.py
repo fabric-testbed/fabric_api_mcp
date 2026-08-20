@@ -8,9 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from fastmcp.server.dependencies import get_http_headers
-
-from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.auth.resolver import optional_token
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
 from fabric_api_mcp.log_helper.decorators import tool_logger
 from fabric_api_mcp.utils.async_helpers import call_threadsafe
@@ -206,8 +204,7 @@ async def make_ip_publicly_routable(
           full control over the entire subnet.
     """
     # Extract bearer token from request
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     if not slice_name and not slice_id:
         raise ValueError("Either slice_name or slice_id must be provided")
@@ -264,8 +261,7 @@ async def get_network_info(
         - public_ips: List of IPs already marked as publicly routable
     """
     # Extract bearer token from request
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     if not slice_name and not slice_id:
         raise ValueError("Either slice_name or slice_id must be provided")

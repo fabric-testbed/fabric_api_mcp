@@ -7,9 +7,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from fastmcp.server.dependencies import get_http_headers
-
-from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.auth.resolver import optional_token
 from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
 from fabric_api_mcp.log_helper.decorators import tool_logger
@@ -124,8 +122,7 @@ async def query_slices(
     slice_state = normalize_list_param(slice_state, "slice_state")
     exclude_slice_state = normalize_list_param(exclude_slice_state, "exclude_slice_state")
 
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     return await call_threadsafe(
         _query_slices_sync,
@@ -212,8 +209,7 @@ async def get_slivers(
 
     Append a summary line: ``3 slivers (1 node, 2 network services)``
     """
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     return await call_threadsafe(
         _get_slivers_sync,

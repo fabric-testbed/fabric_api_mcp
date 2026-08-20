@@ -9,7 +9,7 @@ from typing import Tuple
 
 from fabrictestbed.fabric_manager_v2 import FabricManagerV2
 
-from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.auth.resolver import require_token
 from fabric_api_mcp.config import config
 
 log = logging.getLogger("fabric.mcp")
@@ -102,18 +102,11 @@ def get_fabric_manager() -> Tuple[FabricManagerV2, str]:
         Tuple of (FabricManagerV2 instance, token string)
 
     Raises:
-        ValueError: If Authorization header is missing or invalid (server mode),
-                    or if FABRIC_TOKEN_LOCATION is not set (local mode)
+        MissingTokenError: If the Authorization header is missing or invalid
+            (server mode).  Subclasses ``ValueError``.
+        ValueError: If FABRIC_TOKEN_LOCATION is not set (local mode)
     """
     if config.local_mode:
         return fabric_manager_factory.create_local()
 
-    from fastmcp.server.dependencies import get_http_headers
-
-    headers = get_http_headers(include={"authorization"}) or {}
-    token = extract_bearer_token(headers)
-    if not token:
-        log.warning("Missing Authorization header on protected call")
-        raise ValueError("Authentication Required: Missing or invalid Authorization Bearer token.")
-
-    return fabric_manager_factory.create_authenticated(token)
+    return fabric_manager_factory.create_authenticated(require_token())

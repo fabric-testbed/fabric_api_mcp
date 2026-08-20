@@ -9,9 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastmcp.server.dependencies import get_http_headers
-
-from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.auth.resolver import optional_token
 from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
 from fabric_api_mcp.log_helper.decorators import tool_logger
@@ -177,8 +175,7 @@ async def list_nodes(
     copy-paste it directly into a terminal.
     Append a summary line: ``Slice: my-slice — 2 nodes``
     """
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     if not slice_name and not slice_id:
         raise ValueError("Either slice_name or slice_id must be provided")
@@ -229,8 +226,7 @@ async def list_networks(
 
     Append a summary line: ``Slice: my-slice — 2 networks``
     """
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     if not slice_name and not slice_id:
         raise ValueError("Either slice_name or slice_id must be provided")
@@ -284,8 +280,7 @@ async def list_interfaces(
 
     Append a summary line: ``Slice: my-slice — 3 interfaces``
     """
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     if not slice_name and not slice_id:
         raise ValueError("Either slice_name or slice_id must be provided")

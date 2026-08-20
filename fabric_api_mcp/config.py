@@ -41,6 +41,7 @@ class ServerConfig:
 
     # Metrics
     metrics_enabled: bool
+    metrics_client_ip_labels: bool
 
     # Local mode settings
     local_mode: bool
@@ -84,6 +85,13 @@ class ServerConfig:
             # Metrics
             metrics_enabled=os.environ.get(
                 "METRICS_ENABLED", "0" if is_local else "1"
+            ) not in ("0", "false", "False", ""),
+
+            # Record real client IPs in `client_ip` metric labels. Defaults on to
+            # preserve the existing dashboards; set METRICS_CLIENT_IP_LABELS=0 to
+            # bound cardinality (one series per source address otherwise).
+            metrics_client_ip_labels=os.environ.get(
+                "METRICS_CLIENT_IP_LABELS", "1"
             ) not in ("0", "false", "False", ""),
 
             # Local mode settings

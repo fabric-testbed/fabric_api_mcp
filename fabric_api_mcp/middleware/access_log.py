@@ -11,21 +11,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from fabric_api_mcp.auth.token import decode_token_claims, extract_bearer_token
+from fabric_mcp_common.integrations.starlette import client_ip, request_claims
+
 from fabric_api_mcp.config import config
 
 log = logging.getLogger("fabric.mcp")
-
-
-def _get_client_ip(request: Request) -> str:
-    """Extract client IP from X-Real-IP, X-Forwarded-For, or request.client."""
-    ip = request.headers.get("x-real-ip")
-    if ip:
-        return ip
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
 
 
 class AccessLogMiddleware(BaseHTTPMiddleware):
@@ -41,12 +31,12 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         # Generate or extract request ID for tracing through the system
         rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
 
-        # Extract user identity from JWT for logging
-        client_ip = _get_client_ip(request)
-        token = extract_bearer_token(dict(request.headers))
-        claims = decode_token_claims(token) if token else {}
-        user_sub = claims.get("sub", "")
-        user_email = claims.get("email", "")
+        # Extract user identity from JWT for logging.  request_claims() caches
+        # the decode on request.state, so downstream middleware reuses it.
+        ip = client_ip(request)
+        claims = request_claims(request)
+        user_sub = claims.sub or ""
+        user_email = claims.email or ""
 
         start = time.perf_counter()
         try:
@@ -56,7 +46,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             status = 500
             log.exception("Unhandled exception during request",
                           extra={"request_id": rid, "path": request.url.path, "method": request.method,
-                                 "user_sub": user_sub, "user_email": user_email, "client_ip": client_ip})
+                                 "user_sub": user_sub, "user_email": user_email, "client_ip": ip})
             raise
         finally:
             # Log request completion with timing information
@@ -65,7 +55,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
                 user_display = user_email or user_sub or "anonymous"
                 log.info("HTTP %s %s -> %s in %.2fms (user=%s, ip=%s)",
                          request.method, request.url.path, status, dur_ms,
-                         user_display, client_ip,
+                         user_display, ip,
                          extra={
                              "request_id": rid,
                              "path": request.url.path,
@@ -75,7 +65,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
                              "client": request.client.host if request.client else None,
                              "user_sub": user_sub,
                              "user_email": user_email,
-                             "client_ip": client_ip,
+                             "client_ip": ip,
                          })
         # Return request_id in response headers for client-side tracing
         response.headers["x-request-id"] = rid

@@ -7,9 +7,7 @@ import logging
 from ipaddress import IPv4Network
 from typing import Any, Dict, List, Optional, Union
 
-from fastmcp.server.dependencies import get_http_headers
-
-from fabric_api_mcp.auth.token import extract_bearer_token
+from fabric_api_mcp.auth.resolver import optional_token
 from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fabric_manager import get_fabric_manager
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager
@@ -630,8 +628,7 @@ async def modify_slice_resources(
         - The slice is submitted with wait=False (non-blocking)
         - Use fabric_query_slices to check slice state after modification
     """
-    headers = get_http_headers(include={"authorization"}) or {}
-    id_token = extract_bearer_token(headers)
+    id_token = optional_token()
 
     if not slice_name and not slice_id:
         raise ValueError("Either slice_name or slice_id must be provided")

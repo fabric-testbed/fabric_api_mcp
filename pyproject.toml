@@ -22,6 +22,10 @@ dependencies = [
     "fastmcp",
     "slowapi",
     "prometheus-client",
+    # [metrics] extra: this server imports fabric_mcp_common.metrics, which
+    # needs prometheus-client + starlette. Declared explicitly rather than
+    # relying on them being satisfied by our own direct dependencies.
+    "fabric_mcp_common[metrics]>=0.1.0",
 ]
 
 classifiers = [

@@ -17,7 +17,8 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from fabric_api_mcp.auth.token import decode_token_claims, extract_bearer_token
+from fabric_mcp_common.integrations.starlette import rate_limit_key, request_claims
+
 from fabric_api_mcp.config import config
 
 log = logging.getLogger("fabric.mcp")
@@ -30,21 +31,9 @@ def _rate_limit_key(request: Request) -> str:
     Uses the JWT `sub` claim as the key for authenticated requests,
     falling back to client IP for unauthenticated requests.
     """
-    token = extract_bearer_token(dict(request.headers))
-    if token:
-        claims = decode_token_claims(token)
-        sub = claims.get("sub")
-        if sub:
-            return sub
-
-    # Fall back to client IP
-    ip = request.headers.get("x-real-ip")
-    if ip:
-        return ip
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return get_remote_address(request)
+    # Keys on the `sub` claim, then the proxy-aware client IP, then SlowAPI's
+    # own remote-address resolution when nothing else identifies the caller.
+    return rate_limit_key(request, default=get_remote_address(request))
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
@@ -61,8 +50,8 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JS
     try:
         if config.metrics_enabled:
             from fabric_api_mcp.metrics import mcp_rate_limit_hits_total
-            token = extract_bearer_token(dict(request.headers))
-            key_type = "user" if token else "ip"
+            # Label by what the key actually was: a `sub` claim, or the IP.
+            key_type = "user" if request_claims(request).sub else "ip"
             mcp_rate_limit_hits_total.labels(key_type=key_type).inc()
     except Exception:
         pass

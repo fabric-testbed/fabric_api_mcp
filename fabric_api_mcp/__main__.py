@@ -125,8 +125,16 @@ if config.transport == "http":
     _http_middleware.append(Middleware(AccessLogMiddleware))
 
     if config.metrics_enabled:
+        from fabric_mcp_common.metrics import configure as configure_metrics
+
         from fabric_api_mcp.middleware.metrics import MetricsMiddleware
         from fabric_api_mcp.middleware.security_metrics import SecurityMetricsMiddleware
+
+        # This deployment's dashboards already chart per-IP series, so keep
+        # recording real client IPs. The library default is off, because one
+        # series per source address is unbounded on a public endpoint — new
+        # servers should opt in deliberately.
+        configure_metrics(client_ip_labels=config.metrics_client_ip_labels)
 
         _http_middleware.append(Middleware(MetricsMiddleware))
         _http_middleware.append(Middleware(SecurityMetricsMiddleware))

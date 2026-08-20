@@ -214,7 +214,14 @@ setup_venv() {
 
   # 3. Install fabric_api_mcp into venv (includes fabric-cli as dependency)
   info "Installing fabric_api_mcp into venv..."
+  # Both installs below are pip-from-git, so git must be present.
+  ensure_command git
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+  # fabric_mcp_common first, from git: it is a hard dependency of fabric_api_mcp
+  # and is not on PyPI yet. Installing it up front satisfies the requirement so
+  # the next command does not try to resolve it there. Drop this line once
+  # fabric_mcp_common is published.
+  "$VENV_DIR/bin/pip" install --quiet "fabric_mcp_common[metrics] @ git+https://github.com/fabric-testbed/fabric-mcp-common.git"
   "$VENV_DIR/bin/pip" install --quiet "git+https://github.com/fabric-testbed/fabric_api_mcp.git"
   ok "fabric_api_mcp installed (includes fabric-cli)"
 }
