@@ -142,9 +142,10 @@ class TestNoVerifierIsWired:
     #: and is not a route at all.
     ENABLING_NAMES = frozenset({"verifier", "_verified"})
 
-    #: Ambiguous keywords, each meaningful only in a call to one of these. Both
-    #: are checked with the call target, so TLS and account-verification uses
-    #: elsewhere are ignored.
+    #: Ambiguous keywords, each meaningful only in a call to one of these
+    #: constructors. Resolved through local aliases, subclasses and rebindings,
+    #: so `TokenClaims as TC` and `class MyClaims(TokenClaims)` count too — a
+    #: literal name check missed all of those.
     KWARG_SCOPES = {
         # verify=True without a verifier raises ValueError in TokenResolver, and
         # resolve() verifies only when self.verifier is not None — so a verifier
@@ -152,6 +153,49 @@ class TestNoVerifierIsWired:
         "verify": frozenset({"build_resolver", "TokenResolver"}),
         "verified": frozenset({"TokenClaims"}),
     }
+
+    @staticmethod
+    def _local_aliases(tree, canonical: frozenset) -> set[str]:
+        """Every local name that reaches *canonical*.
+
+        Follows ``import X as Y``, ``Y = X`` rebindings and ``class Y(X)``
+        subclasses, transitively, so scoping a keyword to a constructor is not
+        defeated by renaming it.
+        """
+        import ast
+
+        names = set(canonical)
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(tree):
+                found = None
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    for alias in node.names:
+                        if alias.name.split(".")[-1] in names:
+                            found = alias.asname or alias.name.split(".")[-1]
+                            if found not in names:
+                                names.add(found)
+                                changed = True
+                elif isinstance(node, ast.Assign):
+                    src = getattr(node.value, "id", None) or getattr(
+                        node.value, "attr", None
+                    )
+                    if src in names:
+                        for target in node.targets:
+                            name = getattr(target, "id", None)
+                            if name and name not in names:
+                                names.add(name)
+                                changed = True
+                elif isinstance(node, ast.ClassDef):
+                    for base in node.bases:
+                        base_name = getattr(base, "id", None) or getattr(
+                            base, "attr", None
+                        )
+                        if base_name in names and node.name not in names:
+                            names.add(node.name)
+                            changed = True
+        return names
 
     #: The request.state slot request_claims() consults first.
     CLAIMS_SLOT = "fabric_token_claims"
@@ -187,18 +231,43 @@ class TestNoVerifierIsWired:
         # Ambiguous keywords count only inside the calls that give them their
         # token meaning. Collected first because the walk below reaches keyword
         # nodes without their enclosing Call.
+        scopes = {
+            arg: cls._local_aliases(tree, canonical)
+            for arg, canonical in cls.KWARG_SCOPES.items()
+        }
+
         scoped_kwargs: set[int] = set()
+        unpacked: set[str] = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            func = node.func
-            target = getattr(func, "id", None) or getattr(func, "attr", None)
+            target = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            # functools.partial(TokenClaims, verified=True) and friends: the
+            # constructor arrives as an argument rather than the call target.
+            arg_names = {
+                getattr(a, "id", None) or getattr(a, "attr", None) for a in node.args
+            }
             for kw in node.keywords:
-                allowed = cls.KWARG_SCOPES.get(kw.arg)
-                if allowed and target in allowed and enabled(kw.value):
-                    scoped_kwargs.add(id(kw))
+                allowed = scopes.get(kw.arg)
+                if allowed and (target in allowed or arg_names & allowed):
+                    if enabled(kw.value):
+                        scoped_kwargs.add(id(kw))
+                # `**{"verified": True}` — the keyword has no arg name, so the
+                # enabling flag hides inside a dict literal.
+                elif kw.arg is None and isinstance(kw.value, ast.Dict):
+                    for key, value in zip(kw.value.keys, kw.value.values):
+                        if (
+                            isinstance(key, ast.Constant)
+                            and key.value in cls.KWARG_SCOPES
+                            and enabled(value)
+                            and (
+                                target in scopes[key.value]
+                                or arg_names & scopes[key.value]
+                            )
+                        ):
+                            unpacked.add(f"**{key.value}")
 
-        findings: set[str] = set()
+        findings: set[str] = set(unpacked)
         for node in ast.walk(tree):
             # 1. Library-specific verifier types and modules.
             if isinstance(node, ast.Name) and node.id in cls.VERIFIER_NAMES:
@@ -326,6 +395,36 @@ class TestNoVerifierIsWired:
             pytest.param(
                 "c = TokenClaims(payload, verified=True)\n", id="verified-in-TokenClaims"
             ),
+            # Scoping by literal name missed every one of these.
+            pytest.param(
+                "from fabric_mcp_common.auth import TokenClaims as TC\n"
+                "c = TC(payload, verified=True)\n",
+                id="aliased-import",
+            ),
+            pytest.param(
+                "TC = TokenClaims\nc = TC(payload, verified=True)\n", id="rebinding"
+            ),
+            pytest.param(
+                "class MyClaims(TokenClaims):\n    pass\n"
+                "c = MyClaims(payload, verified=True)\n",
+                id="subclass",
+            ),
+            pytest.param(
+                "TC = TokenClaims\nTC2 = TC\nc = TC2(p, verified=True)\n",
+                id="transitive-rebinding",
+            ),
+            pytest.param(
+                "f = functools.partial(TokenClaims, verified=True)\n",
+                id="functools-partial",
+            ),
+            pytest.param(
+                'c = TokenClaims(p, **{"verified": True})\n', id="dict-unpacking"
+            ),
+            pytest.param(
+                "from fabric_mcp_common.integrations.fastmcp import build_resolver as br\n"
+                "r = br(local_mode=False, verify=True)\n",
+                id="aliased-resolver-factory",
+            ),
         ],
     )
     def test_ambiguous_keywords_count_in_their_own_calls(self, wired):
@@ -368,6 +467,19 @@ class TestNoVerifierIsWired:
             ),
             pytest.param("email_verified = claims.get('email_verified')\n", id="oidc-claim"),
             pytest.param('setattr(user, "verified", True)\n', id="user-setattr"),
+            # Alias resolution must not leak: importing TokenClaims for a type
+            # hint does not make an unrelated constructor a claims constructor.
+            pytest.param(
+                "from fabric_mcp_common.auth import TokenClaims\n"
+                "def f(c: TokenClaims):\n"
+                "    return UserRecord(verified=True)\n",
+                id="claims-imported-for-typing-only",
+            ),
+            pytest.param(
+                'from fabric_mcp_common.auth import TokenClaims as TC\n'
+                'u = UserRecord(verified=True)\n',
+                id="aliased-import-unrelated-constructor",
+            ),
         ],
     )
     def test_canary_does_not_fire_on_unrelated_code(self, benign):
