@@ -1,9 +1,15 @@
 """
 Rate limiting middleware for server mode.
 
-Uses SlowAPI (built on top of `limits`) to enforce per-user request rate limits.
-The rate limit key is the JWT `sub` claim; falls back to client IP for
-unauthenticated requests.
+Uses SlowAPI (built on top of ``limits``). The key is derived only from inputs a
+caller cannot forge — a signature-verified JWT ``sub``, else the address the
+declared proxy asserts, else the socket peer — because the key *is* the bucket.
+See :func:`_rate_limit_key` for the full ordering and why ``X-Forwarded-For`` is
+excluded.
+
+This server does not verify token signatures (it forwards them to the
+orchestrator, which authenticates them), so limiting is per client address in
+practice rather than per user.
 """
 from __future__ import annotations
 
