@@ -133,6 +133,19 @@ def register_rate_limiter(app: FastAPI) -> None:
         log.info("Rate limiting is disabled")
         return
 
+    if not config.rate_limit_trusted_proxies:
+        # Not wrong when the server is exposed directly — the socket peer is the
+        # caller. But behind a reverse proxy the peer is the proxy, so every
+        # caller lands in one bucket and `rate_limit` becomes a service-wide cap.
+        # Silent either way, so say it out loud.
+        log.warning(
+            "RATE_LIMIT_TRUSTED_PROXIES is empty: rate limiting will key on the "
+            "socket peer. Correct if this server is reached directly; if a "
+            "reverse proxy fronts it, every caller shares one bucket and %s "
+            "becomes a limit for the whole service. Set it to the proxy address.",
+            config.rate_limit,
+        )
+
     limiter = Limiter(
         key_func=_rate_limit_key,
         default_limits=[config.rate_limit],

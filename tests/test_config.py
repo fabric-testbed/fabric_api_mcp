@@ -46,13 +46,12 @@ class TestDefaults:
 
 
 class TestTrustedProxies:
-    def test_defaults_cover_loopback_and_private_ranges(self, clean_env):
-        # The deployed shape is nginx proxying over a Docker network, so the
-        # peer is private. A request off the internet never is.
-        proxies = ServerConfig.from_env().rate_limit_trusted_proxies
-        assert "127.0.0.0/8" in proxies
-        assert "172.16.0.0/12" in proxies
-        assert "::1/128" in proxies
+    def test_defaults_to_trusting_no_proxy(self, clean_env):
+        # The code must not guess at the network. A broad default (a whole
+        # private range) would let any container, VPN client or LAN host in that
+        # range forge X-Real-IP and mint rate-limit buckets. The deployment
+        # declares its own proxy — see docker-compose.yml.
+        assert ServerConfig.from_env().rate_limit_trusted_proxies == ()
 
     def test_is_a_tuple_so_it_cannot_be_mutated_in_place(self, clean_env):
         assert isinstance(ServerConfig.from_env().rate_limit_trusted_proxies, tuple)

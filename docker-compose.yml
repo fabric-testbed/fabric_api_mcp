@@ -17,6 +17,12 @@ services:
       FABRIC_AM_HOST: artifacts.fabric-testbed.net
       FABRIC_CORE_API_HOST: uis.fabric-testbed.net
       FABRIC_CREDMGR_HOST: cm.fabric-testbed.net
+      # Only nginx may assert the real client address via X-Real-IP. Keep this
+      # in step with the nginx service's ipv4_address below. Without it the
+      # socket peer is always nginx, so every caller would share one rate-limit
+      # bucket; with anything wider, any host in that range could forge the
+      # header and mint buckets at will.
+      RATE_LIMIT_TRUSTED_PROXIES: 172.31.240.10/32
     volumes:
       - ./mcp-logs:/var/log/mcp # Optional: for application logs
 
@@ -24,8 +30,12 @@ services:
     image: openresty/openresty:latest
     container_name: fabric-api-nginx
     networks:
-      - frontend
-      - backend
+      frontend:
+        # Fixed so mcp-server can trust exactly this address, and nothing else,
+        # for the X-Real-IP it uses as the rate-limit key. Keep in step with
+        # RATE_LIMIT_TRUSTED_PROXIES on mcp-server.
+        ipv4_address: 172.31.240.10
+      backend:
     ports:
       - 443:443
     volumes:
@@ -80,6 +90,13 @@ services:
 
 networks:
   frontend:
+    # Pinned so the nginx container can be given a fixed address, which
+    # mcp-server trusts (and only that address) for the X-Real-IP header it uses
+    # as the rate-limit key. Change both this subnet and NGINX_FRONTEND_IP
+    # together if it collides with an existing network on the host.
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24
   backend:
     internal: true
 

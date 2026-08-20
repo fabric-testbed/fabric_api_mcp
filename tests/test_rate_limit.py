@@ -163,19 +163,31 @@ class TestDirectlyExposed:
 
 
 class TestTrustedProxyMatching:
-    def test_loopback_is_trusted_by_default(self):
-        # Same-host proxy deployments.
-        assert rl._is_trusted_proxy("127.0.0.1")
+    def test_nothing_is_trusted_by_default(self):
+        # The default must not guess at the network. Trusting a whole private
+        # range would cover every other container, VPN client and LAN host that
+        # can reach this port — each able to forge X-Real-IP and mint buckets.
+        for host in ("127.0.0.1", "::1", "172.18.0.5", "10.1.2.3", "192.168.1.10"):
+            assert not rl._is_trusted_proxy(host), f"{host} trusted by default"
 
-    def test_docker_private_ranges_are_trusted_by_default(self):
-        for host in ("172.18.0.5", "10.1.2.3", "192.168.1.10"):
-            assert rl._is_trusted_proxy(host), host
+    def test_an_exact_proxy_address_matches(self, trusted_proxies):
+        trusted_proxies("172.31.240.10/32")
+        assert rl._is_trusted_proxy("172.31.240.10")
 
-    def test_public_addresses_are_not_trusted_by_default(self):
+    def test_neighbours_of_an_exact_proxy_address_do_not_match(self, trusted_proxies):
+        # A /32 is the point: the container next door on the same network is not
+        # the proxy and must not be able to assert a client address.
+        trusted_proxies("172.31.240.10/32")
+        for host in ("172.31.240.11", "172.31.240.9", "172.31.240.1"):
+            assert not rl._is_trusted_proxy(host), host
+
+    def test_public_addresses_are_not_trusted(self, trusted_proxies):
+        trusted_proxies("172.16.0.0/12")
         for host in ("203.0.113.9", "8.8.8.8", "198.51.100.4"):
             assert not rl._is_trusted_proxy(host), host
 
-    def test_missing_or_unparseable_peer_is_not_trusted(self):
+    def test_missing_or_unparseable_peer_is_not_trusted(self, trusted_proxies):
+        trusted_proxies("172.16.0.0/12")
         for host in (None, "", "not-an-ip", "unix-socket"):
             assert not rl._is_trusted_proxy(host)
 
@@ -185,8 +197,10 @@ class TestTrustedProxyMatching:
             assert rl._is_trusted_proxy(PROXY_PEER) is True
         assert any("malformed" in r.getMessage().lower() for r in caplog.records)
 
-    def test_ipv6_loopback_is_trusted_by_default(self):
+    def test_ipv6_proxies_can_be_declared(self, trusted_proxies):
+        trusted_proxies("::1/128")
         assert rl._is_trusted_proxy("::1")
+        assert not rl._is_trusted_proxy("::2")
 
 
 class TestVerifiedSubject:
@@ -298,6 +312,38 @@ class TestRegistration:
         )
         rl.register_rate_limiter(app)
         assert not hasattr(app.state, "limiter")
+
+    def test_warns_when_no_trusted_proxy_is_declared(self, monkeypatch, caplog):
+        # Silent either way, so it must be said: behind a proxy this collapses
+        # every caller into one bucket.
+        monkeypatch.setattr(rl.config, "rate_limit_enabled", True)
+        monkeypatch.setattr(rl.config, "rate_limit_trusted_proxies", ())
+        app = SimpleNamespace(
+            state=SimpleNamespace(),
+            add_middleware=lambda *a, **k: None,
+            add_exception_handler=lambda *a, **k: None,
+        )
+        with caplog.at_level(logging.WARNING, logger="fabric.mcp"):
+            rl.register_rate_limiter(app)
+        assert any(
+            "RATE_LIMIT_TRUSTED_PROXIES is empty" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_no_warning_when_a_proxy_is_declared(self, monkeypatch, caplog):
+        monkeypatch.setattr(rl.config, "rate_limit_enabled", True)
+        monkeypatch.setattr(rl.config, "rate_limit_trusted_proxies", ("172.31.240.10/32",))
+        app = SimpleNamespace(
+            state=SimpleNamespace(),
+            add_middleware=lambda *a, **k: None,
+            add_exception_handler=lambda *a, **k: None,
+        )
+        with caplog.at_level(logging.WARNING, logger="fabric.mcp"):
+            rl.register_rate_limiter(app)
+        assert not any(
+            "RATE_LIMIT_TRUSTED_PROXIES is empty" in r.getMessage()
+            for r in caplog.records
+        )
 
     def test_enabled_config_installs_limiter_middleware_and_handler(self, monkeypatch):
         monkeypatch.setattr(rl.config, "rate_limit_enabled", True)
