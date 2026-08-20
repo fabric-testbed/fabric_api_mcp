@@ -99,6 +99,19 @@ class TestNoVerifierIsWired:
     was the first version. The second version only looked for named verifier
     types, so route 1 slipped past whenever the verifier was a custom protocol
     implementation.
+
+    **Scope, deliberately bounded.** It keys on ``verifier`` and never on bare
+    ``verify``, which in Python means TLS far more often than token verification
+    (``requests.get(url, verify=ca_bundle)``, ``session.verify = path``). That
+    costs nothing: ``TokenResolver.resolve`` only verifies when
+    ``self.verifier is not None``, so a verifier object is always present when
+    verification is genuinely on, and every spelling that supplies one is
+    matched. Matching ``verify`` broadly would fail CI on unrelated HTTPS work,
+    and a false alarm that blocks an innocent change is worse than the gap.
+
+    This is a heuristic over source text, so it is a prompt to re-read the docs,
+    not a security boundary. The real guards — forged subjects, forged headers,
+    deployment wiring — do not depend on it.
     """
 
     #: Names that appear only when verification is being wired. ``TokenVerifier``
@@ -114,13 +127,30 @@ class TestNoVerifierIsWired:
         }
     )
 
-    #: Keyword arguments that switch verification on. Matched structurally with
-    #: the value inspected: ``claims.verified`` is a legitimate *read* — it is
-    #: the guard in _rate_limit_key — whereas ``verified=True`` asserts it.
-    VERIFIER_KWARGS = frozenset({"verifier", "verified", "verify"})
+    #: Names specific enough to mean token verification wherever they appear.
+    #: Deliberately excludes bare ``verify``: in Python that word is
+    #: overwhelmingly TLS vocabulary (``requests.get(url, verify=ca_bundle)``,
+    #: ``session.verify = path``), and this package talks to FABRIC over HTTPS.
+    #: Matching it broadly would fail CI on unrelated work — which is worse than
+    #: the gap it closes, because a false alarm here blocks a change that has
+    #: nothing to do with rate limiting.
+    ENABLING_NAMES = frozenset({"verifier", "verified"})
+
+    #: ``verify`` is only meaningful in a call to one of these, where it is the
+    #: documented flag rather than a TLS argument. Note that ``verify=True``
+    #: without a verifier raises ValueError in TokenResolver, so a verifier is
+    #: always present when verification is genuinely switched on — which is why
+    #: excluding bare ``verify`` elsewhere loses nothing real.
+    RESOLVER_FACTORIES = frozenset({"build_resolver", "TokenResolver"})
 
     #: The request.state slot request_claims() consults first.
     CLAIMS_SLOT = "fabric_token_claims"
+
+    #: Literals worth matching, for dynamic writes like
+    #: ``setattr(resolver, "verifier", V())``. ``"verified"`` is left out: it is
+    #: plausible payload vocabulary (``{"status": "verified"}``) and the
+    #: attribute and keyword rules already cover the real routes.
+    ENABLING_LITERALS = frozenset({"verifier"})
 
     @classmethod
     def _verification_findings(cls, source: str) -> set[str]:
@@ -141,9 +171,27 @@ class TestNoVerifierIsWired:
                 ):
                     docstrings.add(id(body[0].value))
 
+        def enabled(value) -> bool:
+            """False for an explicit opt-out (verifier=None, verified=False)."""
+            return not (isinstance(value, ast.Constant) and value.value in (False, None))
+
+        # `verify=` counts only inside a resolver factory call, where it is the
+        # documented flag rather than a TLS argument. Collected first because the
+        # keyword nodes are reached separately by the walk below.
+        resolver_verify_kwargs: set[int] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name in cls.RESOLVER_FACTORIES:
+                for kw in node.keywords:
+                    if kw.arg == "verify" and enabled(kw.value):
+                        resolver_verify_kwargs.add(id(kw))
+
         findings: set[str] = set()
         for node in ast.walk(tree):
-            # 1. Named verifier types, the verify module.
+            # 1. Library-specific verifier types and modules.
             if isinstance(node, ast.Name) and node.id in cls.VERIFIER_NAMES:
                 findings.add(node.id)
             elif isinstance(node, ast.alias) and node.name in cls.VERIFIER_NAMES:
@@ -151,37 +199,33 @@ class TestNoVerifierIsWired:
             elif isinstance(node, ast.ImportFrom) and node.module in cls.VERIFIER_NAMES:
                 findings.add(node.module)
             elif isinstance(node, ast.Attribute):
-                # 2. The state slot, in any position: `request.state.<slot> =`
-                #    is the spelling the README documents, and it is an
-                #    attribute, not a string. Matching only the literal missed it.
+                # 2. The state slot in any position: `request.state.<slot> =` is
+                #    the spelling the README documents, and it is an attribute,
+                #    not a string.
                 if node.attr in (cls.CLAIMS_SLOT, *cls.VERIFIER_NAMES):
                     findings.add(node.attr)
-                # 3. Post-construction mutation: TokenResolver keeps .verifier
-                #    and .verify, so assigning them enables verification just as
-                #    a constructor argument would. Store context only, so the
-                #    `claims.verified` *read* in _rate_limit_key does not fire.
-                elif node.attr in cls.VERIFIER_KWARGS and isinstance(node.ctx, ast.Store):
+                # 3. Post-construction mutation of .verifier / .verified. Store
+                #    context only, so the `claims.verified` read in
+                #    _rate_limit_key does not fire. `.verify` is excluded: it is
+                #    the TLS spelling (`session.verify = ca_bundle`).
+                elif node.attr in cls.ENABLING_NAMES and isinstance(node.ctx, ast.Store):
                     findings.add(f".{node.attr}=")
-            # 4. Any of these names as a string literal outside a docstring.
-            #    This is what covers every *dynamic* write —
-            #    setattr(resolver, "verifier", V()), vars(r)["verify"] = True,
-            #    r.__dict__["verifier"] = V() — all of which route through a
-            #    literal and so slipped past the attribute-store rule above.
+            # 4. The slot, or "verifier", as a literal outside a docstring. This
+            #    is what covers dynamic writes: setattr(resolver, "verifier", V()),
+            #    vars(r)["verifier"] = V(), r.__dict__["verifier"] = V().
             elif (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
-                and node.value in {cls.CLAIMS_SLOT, *cls.VERIFIER_KWARGS}
+                and node.value in {cls.CLAIMS_SLOT, *cls.ENABLING_LITERALS}
                 and id(node) not in docstrings
             ):
                 findings.add(node.value)
-            # 5. Enabling keywords — value checked, so an explicit opt-out
-            #    (verifier=None, verify=False) does not register.
-            elif isinstance(node, ast.keyword) and node.arg in cls.VERIFIER_KWARGS:
-                disabled = isinstance(node.value, ast.Constant) and node.value.value in (
-                    False,
-                    None,
-                )
-                if not disabled:
+            # 5. Keywords: verifier= / verified= anywhere, and verify= only in a
+            #    resolver factory call.
+            elif isinstance(node, ast.keyword) and (
+                node.arg in cls.ENABLING_NAMES or id(node) in resolver_verify_kwargs
+            ):
+                if enabled(node.value):
                     findings.add(f"{node.arg}=")
         return findings
 
@@ -241,23 +285,51 @@ class TestNoVerifierIsWired:
         "wired",
         [
             pytest.param("resolver.verifier = SomeVerifier()\n", id="attribute"),
-            pytest.param("resolver.verify = True\n", id="attribute-flag"),
             pytest.param(
                 'setattr(resolver, "verifier", SomeVerifier())\n', id="setattr"
             ),
-            pytest.param('setattr(resolver, "verify", True)\n', id="setattr-flag"),
             pytest.param('vars(resolver)["verifier"] = V()\n', id="vars-subscript"),
             pytest.param(
-                'resolver.__dict__["verify"] = True\n', id="dunder-dict-subscript"
+                'resolver.__dict__["verifier"] = V()\n', id="dunder-dict-subscript"
             ),
             pytest.param(
                 'object.__setattr__(resolver, "verifier", V())\n', id="object-setattr"
             ),
-            pytest.param("resolver.verify |= True\n", id="augmented-assignment"),
+            pytest.param("claims.verified = True\n", id="verified-attribute"),
         ],
     )
     def test_canary_catches_post_construction_mutation(self, wired):
         assert self._verification_findings(wired), f"missed: {wired.strip()}"
+
+    def test_verify_flag_counts_inside_a_resolver_factory(self):
+        wired = "r = build_resolver(local_mode=False, verifier=V(), verify=True)\n"
+        assert self._verification_findings(wired)
+
+    # A false alarm here blocks unrelated work, so these matter as much as the
+    # catches. `verify` in Python is overwhelmingly TLS vocabulary, and this
+    # package talks to FABRIC over HTTPS.
+    @pytest.mark.parametrize(
+        "benign",
+        [
+            pytest.param("requests.get(url, verify=True)\n", id="requests-verify-true"),
+            pytest.param(
+                'requests.get(url, verify="/etc/ssl/ca.pem")\n', id="requests-verify-path"
+            ),
+            pytest.param("httpx.Client(verify=ssl_context)\n", id="httpx-verify-ctx"),
+            pytest.param(
+                'session.verify = "/etc/ssl/ca.pem"\n', id="session-verify-attribute"
+            ),
+            pytest.param('payload = {"status": "verified"}\n', id="verified-in-payload"),
+            pytest.param('action = "verify"\n', id="verify-as-a-string"),
+            pytest.param("if claims.verified:\n    pass\n", id="reading-the-guard"),
+            pytest.param(
+                "r = build_resolver(verifier=None, verify=False)\n", id="explicit-opt-out"
+            ),
+        ],
+    )
+    def test_canary_does_not_fire_on_unrelated_code(self, benign):
+        found = self._verification_findings(benign)
+        assert not found, f"false positive on {benign.strip()!r}: {sorted(found)}"
 
     def test_canary_ignores_reading_the_verified_flag(self):
         # _rate_limit_key does exactly this. It is the guard, not the wiring.
