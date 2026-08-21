@@ -9,7 +9,7 @@ prometheus-client
 uv
 
 # Shared FABRIC MCP plumbing: token auth, Prometheus instrumentation, logging.
-fabric_mcp_common[metrics]>=0.1.0
+fabric_mcp_common[metrics]>=0.3.0
 
 # Testing dependencies
 pytest
