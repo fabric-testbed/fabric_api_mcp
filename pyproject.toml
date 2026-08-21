@@ -19,7 +19,9 @@ dependencies = [
     "pydantic>=2.0",
     "requests",
     "fabrictestbed_extensions==2.0.1",
-    "fastmcp",
+    # Capped below 4.0: fastmcp 4.x depends on mcp 2.x, which removed the
+    # vendored `mcp.server.fastmcp`. Keep in step with requirements.txt.
+    "fastmcp>=3,<4",
     "slowapi",
     "prometheus-client",
     # [metrics] extra: this server imports fabric_mcp_common.metrics, which

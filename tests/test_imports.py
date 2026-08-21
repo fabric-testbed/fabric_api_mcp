@@ -203,3 +203,81 @@ class TestPackageSurface:
         import fabric_api_mcp
 
         assert fabric_api_mcp.__version__.count(".") == 2
+
+
+class TestFastmcpPinning:
+    """Guards the deploy break of 2026-08-21.
+
+    `fastmcp` was unpinned and the Dockerfile passed ``--prerelease=allow``, so a
+    rebuild resolved fastmcp 4.0.0b3, which depends on mcp 2.x. mcp 2.x removed
+    the vendored ``mcp.server.fastmcp`` that ``tools/slices/lifecycle.py``
+    imported, and the image built green then died at import.
+
+    These are facts about manifests and module provenance — no source
+    heuristics — so they are cheap and cannot drift into false positives.
+    """
+
+    @staticmethod
+    def _repo_root():
+        import pathlib
+
+        import fabric_api_mcp
+
+        return pathlib.Path(fabric_api_mcp.__file__).resolve().parent.parent
+
+    def test_context_comes_from_fastmcp_not_the_copy_inside_mcp(self):
+        # mcp 2.x has no mcp.server.fastmcp; importing from fastmcp works on
+        # both 3.x and 4.x.
+        from fabric_api_mcp.tools.slices.lifecycle import Context
+
+        assert Context.__module__.split(".")[0] == "fastmcp", (
+            f"Context resolved from {Context.__module__!r}; import it from fastmcp"
+        )
+
+    def test_installed_fastmcp_is_below_4(self):
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            installed = version("fastmcp")
+        except PackageNotFoundError:  # pragma: no cover - not installed
+            import pytest
+
+            pytest.skip("fastmcp is not installed")
+        major = int(installed.split(".")[0])
+        assert major == 3, (
+            f"fastmcp {installed} is installed; 4.x pulls mcp 2.x, which removed "
+            "mcp.server.fastmcp. Lift the cap only with a tested upgrade."
+        )
+
+    def test_both_manifests_cap_fastmcp(self):
+        # requirements.txt is what the Dockerfile installs from; pyproject.toml
+        # is what `pip install .` uses. Pinning only one leaves the other open.
+        import re
+
+        for name in ("requirements.txt", "pyproject.toml"):
+            text = (self._repo_root() / name).read_text()
+            specs = re.findall(r"fastmcp\s*([<>=!,\.\d\s]*)", text)
+            assert any("<4" in s.replace(" ", "") for s in specs), (
+                f"{name} does not cap fastmcp below 4.0"
+            )
+
+    def test_dockerfile_does_not_allow_prereleases(self):
+        # A beta must never be resolved into a production image.
+        dockerfile = self._repo_root() / "Dockerfile"
+        if not dockerfile.is_file():  # pragma: no cover
+            import pytest
+
+            pytest.skip("no Dockerfile")
+        # Comment lines are stripped first: the comment above the RUN directive
+        # names the flag to explain why it is gone, and matching prose rather
+        # than code would fail on that explanation.
+        directives = [
+            line
+            for line in dockerfile.read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+        offending = [line for line in directives if "--prerelease=allow" in line]
+        assert not offending, (
+            f"Dockerfile allows prereleases in {offending}; that is how "
+            "fastmcp 4.0.0b3 reached the image"
+        )
