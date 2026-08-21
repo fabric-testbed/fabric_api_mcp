@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The reason this schedule exists. On 2026-08-21 a deploy failed with
+  # `ModuleNotFoundError: No module named 'mcp.server.fastmcp'` — nothing in this
+  # repo had changed. fastmcp 4.0.0b3 and mcp 2.0.0 had been published, and the
+  # image resolved them. A PR-triggered build would never have run. This turns
+  # that class of break into a red build overnight instead of a failed deploy.
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install from requirements.txt, as the image does
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --no-deps -e .
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Report what resolved
+        if: always()
+        run: pip list | grep -iE '^(mcp|fastmcp|fastmcp-slim|fabric_mcp_common|starlette) ' || true
+
+  resolve:
+    # The job that would have caught the outage. It installs from a clean index
+    # with no lockfile and no cache, exactly as a fresh image build does, then
+    # imports the module that failed. Runs nightly, so a newly published upstream
+    # version breaks CI rather than a deploy.
+    name: clean resolve and import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install with uv, matching the Dockerfile
+        run: |
+          python -m pip install --upgrade pip uv
+          uv pip install --system --no-cache -r requirements.txt
+          uv pip install --system --no-cache --no-deps .
+      - name: Show the resolved versions
+        run: pip list | grep -iE '^(mcp|fastmcp|fastmcp-slim|fabric_mcp_common) '
+      - name: Assert the resolved fastmcp is still 3.x
+        # Stated here as well as in the unit tests, so this job is self-contained
+        # about the thing it is named for: a newly published fastmcp 4.x final
+        # would satisfy an unpinned requirement and land here first.
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+          got = version("fastmcp")
+          major = int(got.split(".")[0])
+          assert major == 3, (
+              f"resolved fastmcp {got}: 4.x depends on mcp 2.x, which restructured "
+              "mcp.server. The app imports Context from fastmcp so it may still "
+              "import, but the upgrade is untested — lift the cap deliberately."
+          )
+          print("fastmcp", got, "OK")
+          PY
+      - name: Import every module, including the one that broke the deploy
+        run: |
+          python - <<'PY'
+          import importlib
+          # tools/slices/lifecycle.py is where the 2026-08-21 failure surfaced.
+          modules = [
+              "fabric_api_mcp",
+              "fabric_api_mcp.config",
+              "fabric_api_mcp.auth.resolver",
+              "fabric_api_mcp.log_helper.config",
+              "fabric_api_mcp.middleware.access_log",
+              "fabric_api_mcp.middleware.rate_limit",
+              "fabric_api_mcp.tools.slices.lifecycle",
+              "fabric_api_mcp.tools",
+              "fabric_api_mcp.__main__",
+          ]
+          for name in modules:
+              importlib.import_module(name)
+              print("ok", name)
+          PY
+
+  image:
+    # An import error inside the image is the failure mode that actually reached
+    # production: it built green and died on start. Building and running it here
+    # is the only check that covers the real artifact.
+    name: docker build and import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build without cache
+        run: docker build --no-cache -t fabric-api-mcp:ci .
+      - name: Import inside the image
+        run: |
+          docker run --rm fabric-api-mcp:ci \
+            python -c "import fabric_api_mcp.__main__; print('image imports OK')"
+      - name: Show what the image resolved
+        run: docker run --rm fabric-api-mcp:ci pip list | grep -iE '^(mcp|fastmcp|fabric_mcp_common) '
+
+  deployment-wiring:
+    # docker-compose.yml and the rate-limit trust config are two halves of one
+    # decision. Too narrow is a service-wide bucket, too wide is a bypass.
+    name: deployment wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate compose
+        run: docker compose config --quiet
+      - name: Check the wiring tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --no-deps -e .
+          python -m pytest tests/test_deployment_wiring.py -q
