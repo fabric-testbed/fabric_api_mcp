@@ -23,8 +23,12 @@ WORKDIR /app
 
 # Leverage layer caching: install dependencies first
 COPY requirements.txt /app/requirements.txt
+# No --prerelease=allow: it resolved fastmcp to the 4.0.0 beta, which pulls
+# mcp 2.0.0, and mcp 2.0.0 dropped the vendored `mcp.server.fastmcp` the app
+# imports — the container built green and died at import. Betas do not belong in
+# a production image; nothing here needs one to resolve.
 RUN pip install --no-cache-dir uv \
- && uv pip install --system --no-cache --prerelease=allow -r /app/requirements.txt
+ && uv pip install --system --no-cache -r /app/requirements.txt
 
 # App code + project metadata, then install the package itself
 COPY pyproject.toml README.md LICENSE /app/

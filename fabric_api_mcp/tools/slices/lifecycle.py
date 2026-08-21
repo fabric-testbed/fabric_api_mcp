@@ -7,7 +7,11 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from mcp.server.fastmcp import Context
+# Imported from fastmcp directly, not the copy vendored inside mcp: mcp 2.x
+# removed `mcp.server.fastmcp`, and this spelling works on fastmcp 3.x and 4.x
+# alike. Note this alone does not make the app run on fastmcp 4 — that is a
+# major restructure; the version cap is what keeps the build working.
+from fastmcp import Context
 
 from fabric_api_mcp.config import config
 from fabric_api_mcp.dependencies.fablib_factory import create_fablib_manager

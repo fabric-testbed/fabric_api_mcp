@@ -3,7 +3,12 @@ uvicorn
 pydantic>=2.0
 requests
 fabrictestbed_extensions==2.0.1
-fastmcp
+# Capped below 4.0: fastmcp 4.x depends on mcp 2.x, which restructured
+# mcp.server and removed the vendored `mcp.server.fastmcp`. Lift this only
+# together with the code that imports from fastmcp, and test the upgrade —
+# removing --prerelease=allow from the Dockerfile is not enough on its own,
+# because 4.0 going final would satisfy an unpinned requirement.
+fastmcp>=3,<4
 slowapi
 prometheus-client
 uv
