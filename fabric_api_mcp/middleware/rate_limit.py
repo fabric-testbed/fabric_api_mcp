@@ -14,9 +14,7 @@ for what enabling per-user keying would actually take.
 """
 from __future__ import annotations
 
-import ipaddress
 import logging
-from typing import Optional
 
 from fastapi import FastAPI
 from slowapi import Limiter
@@ -26,33 +24,12 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from fabric_mcp_common.integrations.starlette import request_claims
+from fabric_mcp_common.integrations.starlette import request_claims, trusted_client_ip
+from fabric_mcp_common.net import invalid_networks
 
 from fabric_api_mcp.config import config
 
 log = logging.getLogger("fabric.mcp")
-
-#: Header a trusted proxy uses to assert the real client address. nginx sets
-#: this from ``$remote_addr``, overwriting anything the client sent — unlike
-#: ``X-Forwarded-For``, which it appends to.
-TRUSTED_CLIENT_IP_HEADER = "x-real-ip"
-
-
-def _is_trusted_proxy(host: Optional[str]) -> bool:
-    """Whether *host* is one of the peers allowed to assert the client address."""
-    if not host:
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    for entry in config.rate_limit_trusted_proxies:
-        try:
-            if address in ipaddress.ip_network(entry, strict=False):
-                return True
-        except ValueError:
-            log.warning("Ignoring malformed RATE_LIMIT_TRUSTED_PROXIES entry: %s", entry)
-    return False
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -118,13 +95,18 @@ def _rate_limit_identity(request: Request) -> tuple[str, str]:
     if claims.verified and claims.sub:
         return str(claims.sub), "user"
 
-    peer = getattr(getattr(request, "client", None), "host", None)
-    if _is_trusted_proxy(peer):
-        asserted = request.headers.get(TRUSTED_CLIENT_IP_HEADER)
-        if asserted:
-            return asserted.strip(), "ip"
-
-    return get_remote_address(request), "ip"
+    # Steps 2 and 3 are fabric_mcp_common.trusted_client_ip: it honours the
+    # asserted header only from a configured peer, and returns the peer
+    # otherwise. Only the `key_type` label is ours, and it comes from this one
+    # call so it cannot disagree with the key.
+    return (
+        trusted_client_ip(
+            request,
+            trusted_proxies=config.rate_limit_trusted_proxies,
+            default=get_remote_address(request),
+        ),
+        "ip",
+    )
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
@@ -165,6 +147,16 @@ def register_rate_limiter(app: FastAPI) -> None:
     if not config.rate_limit_enabled:
         log.info("Rate limiting is disabled")
         return
+
+    malformed = invalid_networks(config.rate_limit_trusted_proxies)
+    if malformed:
+        # Reported once here rather than per request. A typo silently narrowing
+        # the trusted set means callers behind the proxy collapse into one
+        # bucket, which is a capacity bug that otherwise looks like nothing.
+        log.warning(
+            "Ignoring malformed RATE_LIMIT_TRUSTED_PROXIES entries: %s",
+            ", ".join(malformed),
+        )
 
     if not config.rate_limit_trusted_proxies:
         # Not wrong when the server is exposed directly — the socket peer is the

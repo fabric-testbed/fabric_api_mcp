@@ -162,45 +162,78 @@ class TestDirectlyExposed:
         assert key == PROXY_PEER
 
 
-class TestTrustedProxyMatching:
-    def test_nothing_is_trusted_by_default(self):
-        # The default must not guess at the network. Trusting a whole private
-        # range would cover every other container, VPN client and LAN host that
-        # can reach this port — each able to forge X-Real-IP and mint buckets.
-        for host in ("127.0.0.1", "::1", "172.18.0.5", "10.1.2.3", "192.168.1.10"):
-            assert not rl._is_trusted_proxy(host), f"{host} trusted by default"
+class TestTrustedProxyConfiguration:
+    """Config reaches the key correctly.
 
-    def test_an_exact_proxy_address_matches(self, trusted_proxies):
-        trusted_proxies("172.31.240.10/32")
-        assert rl._is_trusted_proxy("172.31.240.10")
+    The CIDR matching itself now lives in fabric_mcp_common
+    (net.peer_in_networks, tested there); these assert the app wires it up and
+    that the observable key changes as intended, rather than poking a private
+    helper.
+    """
 
-    def test_neighbours_of_an_exact_proxy_address_do_not_match(self, trusted_proxies):
-        # A /32 is the point: the container next door on the same network is not
-        # the proxy and must not be able to assert a client address.
-        trusted_proxies("172.31.240.10/32")
-        for host in ("172.31.240.11", "172.31.240.9", "172.31.240.1"):
-            assert not rl._is_trusted_proxy(host), host
+    def test_default_configuration_trusts_nothing(self, monkeypatch):
+        # Real default from ServerConfig, not a fixture value.
+        from fabric_api_mcp.config import ServerConfig
 
-    def test_public_addresses_are_not_trusted(self, trusted_proxies):
-        trusted_proxies("172.16.0.0/12")
-        for host in ("203.0.113.9", "8.8.8.8", "198.51.100.4"):
-            assert not rl._is_trusted_proxy(host), host
+        monkeypatch.delenv("RATE_LIMIT_TRUSTED_PROXIES", raising=False)
+        monkeypatch.setattr(
+            rl.config,
+            "rate_limit_trusted_proxies",
+            ServerConfig.from_env().rate_limit_trusted_proxies,
+        )
+        key = rl._rate_limit_key(
+            make_request(client_host=PROXY_PEER, headers={"x-real-ip": "203.0.113.9"})
+        )
+        assert key == PROXY_PEER
 
-    def test_missing_or_unparseable_peer_is_not_trusted(self, trusted_proxies):
-        trusted_proxies("172.16.0.0/12")
-        for host in (None, "", "not-an-ip", "unix-socket"):
-            assert not rl._is_trusted_proxy(host)
+    def test_an_exact_proxy_address_is_honoured(self, trusted_proxies):
+        trusted_proxies(f"{PROXY_PEER}/32")
+        key = rl._rate_limit_key(
+            make_request(client_host=PROXY_PEER, headers={"x-real-ip": "203.0.113.9"})
+        )
+        assert key == "203.0.113.9"
 
-    def test_malformed_config_entries_are_skipped_not_fatal(self, trusted_proxies, caplog):
-        trusted_proxies("not-a-cidr", "172.16.0.0/12")
-        with caplog.at_level(logging.WARNING, logger="fabric.mcp"):
-            assert rl._is_trusted_proxy(PROXY_PEER) is True
-        assert any("malformed" in r.getMessage().lower() for r in caplog.records)
+    def test_a_neighbour_of_that_address_is_not(self, trusted_proxies):
+        trusted_proxies(f"{PROXY_PEER}/32")
+        key = rl._rate_limit_key(
+            make_request(client_host="172.31.240.11", headers={"x-real-ip": "203.0.113.9"})
+        )
+        assert key == "172.31.240.11"
 
     def test_ipv6_proxies_can_be_declared(self, trusted_proxies):
         trusted_proxies("::1/128")
-        assert rl._is_trusted_proxy("::1")
-        assert not rl._is_trusted_proxy("::2")
+        assert (
+            rl._rate_limit_key(make_request(client_host="::1", headers={"x-real-ip": "203.0.113.9"}))
+            == "203.0.113.9"
+        )
+        assert rl._rate_limit_key(make_request(client_host="::2")) == "::2"
+
+    def test_a_malformed_entry_does_not_disable_the_valid_ones(self, trusted_proxies):
+        trusted_proxies("not-a-cidr", "172.16.0.0/12")
+        key = rl._rate_limit_key(
+            make_request(client_host=PROXY_PEER, headers={"x-real-ip": "203.0.113.9"})
+        )
+        assert key == "203.0.113.9"
+
+    def test_malformed_entries_are_reported_at_startup(self, monkeypatch, caplog):
+        # Moved off the request path: a typo narrowing the trusted set is a
+        # capacity bug that otherwise looks like nothing.
+        monkeypatch.setattr(rl.config, "rate_limit_enabled", True)
+        monkeypatch.setattr(
+            rl.config, "rate_limit_trusted_proxies", ("nope", "172.16.0.0/12", "also/bad")
+        )
+        app = SimpleNamespace(
+            state=SimpleNamespace(),
+            add_middleware=lambda *a, **k: None,
+            add_exception_handler=lambda *a, **k: None,
+        )
+        with caplog.at_level(logging.WARNING, logger="fabric.mcp"):
+            rl.register_rate_limiter(app)
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("malformed RATE_LIMIT_TRUSTED_PROXIES" in m for m in messages)
+        hit = next(m for m in messages if "malformed" in m)
+        assert "nope" in hit and "also/bad" in hit
+        assert "172.16.0.0/12" not in hit
 
 
 class TestVerifiedSubject:
